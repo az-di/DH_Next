@@ -4,6 +4,7 @@ import { createBrain } from "./llm/index.ts";
 import { createDeduper } from "./messaging/dedupe.ts";
 import { createPhotonTransport, type PhotonTransport } from "./messaging/photon.ts";
 import { ConsoleMessenger, SendblueMessenger, type Messenger } from "./messaging/sendblue.ts";
+import { createMockDemo, type MockDemo } from "./mock/index.ts";
 import { Coordinator } from "./plans/coordinator.ts";
 import { createServer } from "./server.ts";
 
@@ -13,6 +14,7 @@ const provider =
   config.messagingProvider || (hasPhoton() ? "photon" : hasSendblue() ? "sendblue" : "console");
 
 let photon: PhotonTransport | undefined;
+let mock: MockDemo | undefined;
 let messenger: Messenger;
 if (provider === "photon") {
   try {
@@ -24,18 +26,23 @@ if (provider === "photon") {
   messenger = photon.messenger;
 } else if (provider === "sendblue") {
   messenger = new SendblueMessenger();
+} else if (provider === "mock") {
+  // Local group chat at /mock with fake users, seeded calendars, and a fast-forward clock.
+  mock = await createMockDemo();
+  messenger = mock.messenger;
 } else {
   console.warn("[messaging] no provider credentials — messages will be logged, not sent");
   messenger = new ConsoleMessenger();
 }
 
-const repo = createRepo();
-const coordinator = new Coordinator({ repo, messenger, brain: createBrain() });
-const app = createServer({ repo, coordinator, photon });
+const repo = mock?.repo ?? createRepo();
+const coordinator = new Coordinator({ repo, messenger, brain: createBrain(), ...mock?.coordinatorDeps });
+const app = createServer({ repo, coordinator, photon, mock: mock?.server });
 
 app.listen(config.port, () => {
   console.log(`[server] listening on :${config.port} (messaging: ${provider})`);
   if (provider === "sendblue") console.log(`[server] Sendblue webhook: ${config.publicBaseUrl}/webhooks/sendblue`);
+  if (mock) console.log(`[server] mock group chat: http://localhost:${config.port}/mock`);
   if (photon && config.photon.inbound === "webhook") {
     console.log(`[server] Photon webhook: ${config.publicBaseUrl}/webhooks/photon`);
   }

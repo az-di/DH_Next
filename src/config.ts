@@ -12,7 +12,7 @@ export const config = {
   defaultTimezone: env("DEFAULT_TIMEZONE", "America/Los_Angeles"),
   schedulerIntervalMs: Number(env("SCHEDULER_INTERVAL_MS", "60000")),
 
-  /** "photon" | "sendblue" | "console". Defaults to whichever has credentials. */
+  /** "photon" | "sendblue" | "console" | "mock". Defaults to whichever has credentials. */
   messagingProvider: env("MESSAGING_PROVIDER"),
 
   // Photon Spectrum. Names match what spectrum-ts reads from the environment.

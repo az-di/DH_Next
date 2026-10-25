@@ -5,12 +5,15 @@ import type { Repo } from "./db/repo.ts";
 import { createDeduper } from "./messaging/dedupe.ts";
 import { parseInbound, type InboundMessage } from "./messaging/inbound.ts";
 import type { PhotonTransport } from "./messaging/photon.ts";
+import { createMockRouter, type MockDemoDeps } from "./mock/routes.ts";
 import type { Coordinator } from "./plans/coordinator.ts";
 
 export function createServer(deps: {
   repo: Repo;
   coordinator: Coordinator;
   photon?: PhotonTransport;
+  /** Mounts the /mock group chat. Only set when MESSAGING_PROVIDER=mock. */
+  mock?: Omit<MockDemoDeps, "coordinator">;
 }): Express {
   const app = express();
   const firstTime = createDeduper();
@@ -53,6 +56,7 @@ export function createServer(deps: {
     });
   });
 
+  if (deps.mock) app.use(createMockRouter({ ...deps.mock, coordinator: deps.coordinator }));
   app.use(createCalendarRouter(deps.repo));
   return app;
 }

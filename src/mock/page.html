@@ -1,0 +1,1120 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Mock Group Chat</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>💬</text></svg>">
+<style>
+  :root {
+    --bg: #ffffff;
+    --page: #f2f2f7;
+    --text: #000000;
+    --muted: #8e8e93;
+    --hairline: rgba(60, 60, 67, 0.18);
+    --blue: #0b84fe;
+    --gray-bubble: #e9e9eb;
+    --bar: rgba(249, 249, 249, 0.86);
+    --card: #ffffff;
+    --chip: #f2f2f7;
+    --red: #ff3b30;
+    --green: #34c759;
+    --shadow: 0 20px 60px rgba(0, 0, 0, 0.12), 0 2px 8px rgba(0, 0, 0, 0.06);
+    --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #000000;
+      --page: #111113;
+      --text: #ffffff;
+      --muted: #8d8d93;
+      --hairline: rgba(84, 84, 88, 0.6);
+      --blue: #0a84ff;
+      --gray-bubble: #26252a;
+      --bar: rgba(22, 22, 24, 0.86);
+      --card: #1c1c1e;
+      --chip: #2c2c2e;
+      --red: #ff453a;
+      --green: #30d158;
+      --shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+    }
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    background: var(--page);
+    color: var(--text);
+    font: 17px/1.3 var(--font);
+    -webkit-font-smoothing: antialiased;
+  }
+  button { font: inherit; color: inherit; cursor: pointer; }
+
+  .stage {
+    min-height: 100%;
+    display: flex;
+    justify-content: center;
+    align-items: flex-start;
+    gap: 32px;
+    padding: 24px;
+  }
+
+  /* ───────────── phone ───────────── */
+  .phone {
+    position: relative;
+    width: 393px;
+    height: min(852px, calc(100vh - 48px));
+    min-height: 560px;
+    background: var(--bg);
+    border-radius: 48px;
+    box-shadow: var(--shadow), 0 0 0 1px var(--hairline);
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    flex-shrink: 0;
+  }
+  .statusbar {
+    height: 50px;
+    padding: 16px 32px 0 40px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 16px;
+    font-weight: 600;
+    letter-spacing: -0.2px;
+    background: var(--bar);
+  }
+  .statusbar svg { display: block; fill: var(--text); }
+  .sb-icons { display: flex; gap: 6px; align-items: center; }
+
+  .chat-header {
+    position: relative;
+    padding: 4px 16px 10px;
+    background: var(--bar);
+    backdrop-filter: saturate(180%) blur(20px);
+    -webkit-backdrop-filter: saturate(180%) blur(20px);
+    border-bottom: 0.5px solid var(--hairline);
+    text-align: center;
+    z-index: 2;
+  }
+  .back {
+    position: absolute;
+    left: 10px;
+    top: 16px;
+    color: var(--blue);
+    display: flex;
+    align-items: center;
+  }
+  .avatars { display: flex; justify-content: center; margin-bottom: 3px; }
+  .avatars .avatar { width: 34px; height: 34px; font-size: 13px; border: 2px solid var(--bar); margin: 0 -6px; }
+  .group-name { font-size: 11px; color: var(--text); display: inline-flex; align-items: center; gap: 2px; }
+  .group-name svg { fill: var(--muted); }
+
+  .avatar {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: #fff;
+    font-size: 12px;
+    font-weight: 600;
+    flex-shrink: 0;
+    user-select: none;
+  }
+
+  .thread {
+    flex: 1;
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding: 8px 0 12px;
+    scroll-behavior: smooth;
+  }
+  .empty-thread {
+    color: var(--muted);
+    text-align: center;
+    font-size: 13px;
+    padding: 40px 32px;
+    line-height: 1.5;
+  }
+  .stamp {
+    text-align: center;
+    color: var(--muted);
+    font-size: 11px;
+    margin: 14px 0 6px;
+  }
+  .stamp b { font-weight: 600; }
+
+  .row {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    padding: 0 16px 0 10px;
+    margin-top: 2px;
+  }
+  .row.mine { align-items: flex-end; padding: 0 16px 0 10px; }
+  .row.first { margin-top: 8px; }
+  .row.reacted { margin-top: 18px; }
+  .sender {
+    font-size: 11px;
+    color: var(--muted);
+    margin: 0 0 2px 50px;
+  }
+  .line { display: flex; align-items: flex-end; gap: 8px; max-width: 100%; touch-action: pan-y; }
+  /* Sit above the neighbouring bubble's tail mask. */
+  .line > .avatar { position: relative; z-index: 1; }
+  .row.mine .line { justify-content: flex-end; }
+  .avatar-slot { width: 28px; flex-shrink: 0; }
+  .swipe-icon {
+    position: absolute;
+    left: 14px;
+    bottom: 6px;
+    width: 26px;
+    height: 26px;
+    border-radius: 50%;
+    background: var(--chip);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0;
+    transform: scale(0.6);
+    pointer-events: none;
+  }
+  .swipe-icon svg { fill: var(--muted); }
+
+  .bubble {
+    position: relative;
+    max-width: 264px;
+    padding: 7px 12px 8px;
+    border-radius: 18px;
+    background: var(--gray-bubble);
+    color: var(--text);
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    user-select: none;
+    -webkit-user-select: none;
+    -webkit-touch-callout: none;
+    cursor: default;
+    transition: transform 0.18s ease;
+  }
+  .row.mine .bubble { background: var(--blue); color: #fff; }
+  .bubble.dragging { transition: none; }
+  .bubble.pressed { transform: scale(0.97); }
+
+  /* iMessage-style tails on the last bubble of a run. */
+  .bubble.tail::before, .bubble.tail::after {
+    content: "";
+    position: absolute;
+    bottom: 0;
+    height: 20px;
+  }
+  .row:not(.mine) .bubble.tail::before {
+    left: -7px;
+    width: 20px;
+    background: var(--gray-bubble);
+    border-bottom-right-radius: 16px;
+  }
+  .row:not(.mine) .bubble.tail::after {
+    left: -26px;
+    width: 26px;
+    background: var(--bg);
+    border-bottom-right-radius: 10px;
+  }
+  .row.mine .bubble.tail::before {
+    right: -7px;
+    width: 20px;
+    background: var(--blue);
+    border-bottom-left-radius: 16px;
+  }
+  .row.mine .bubble.tail::after {
+    right: -26px;
+    width: 26px;
+    background: var(--bg);
+    border-bottom-left-radius: 10px;
+  }
+
+  .tapbacks {
+    position: absolute;
+    top: -16px;
+    right: -12px;
+    display: flex;
+    z-index: 1;
+  }
+  .row.mine .tapbacks { right: auto; left: -12px; flex-direction: row-reverse; }
+  .tapback {
+    min-width: 30px;
+    height: 26px;
+    padding: 0 6px;
+    margin-left: -8px;
+    border-radius: 13px;
+    background: var(--gray-bubble);
+    border: 2px solid var(--bg);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 2px;
+    font-size: 13px;
+    line-height: 1;
+    color: var(--text);
+  }
+  .tapback.by-me { background: var(--blue); color: #fff; }
+  .tapback small { font-size: 11px; font-weight: 600; }
+
+  .quote {
+    max-width: 240px;
+    margin: 0 0 3px 36px;
+    padding: 5px 11px;
+    border-radius: 14px;
+    border: 1px solid var(--hairline);
+    color: var(--muted);
+    font-size: 13px;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+  .row.mine .quote { margin: 0 0 3px; }
+
+  .receipt {
+    font-size: 11px;
+    color: var(--muted);
+    margin: 3px 2px 0;
+    font-weight: 500;
+  }
+
+  .typing { display: flex; gap: 4px; padding: 12px 14px; }
+  .typing i {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--muted);
+    opacity: 0.4;
+    animation: blink 1.2s infinite;
+  }
+  .typing i:nth-child(2) { animation-delay: 0.2s; }
+  .typing i:nth-child(3) { animation-delay: 0.4s; }
+  @keyframes blink { 0%, 60%, 100% { opacity: 0.35; } 30% { opacity: 0.9; } }
+
+  /* ───────────── composer ───────────── */
+  .composer {
+    padding: 8px 12px 30px;
+    background: var(--bar);
+    backdrop-filter: saturate(180%) blur(20px);
+    -webkit-backdrop-filter: saturate(180%) blur(20px);
+  }
+  .replying {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 0 4px 8px 52px;
+    font-size: 13px;
+    color: var(--muted);
+  }
+  .replying[hidden] { display: none; }
+  .replying span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .replying b { color: var(--text); font-weight: 600; }
+  .replying button { border: 0; background: var(--chip); border-radius: 50%; width: 22px; height: 22px; line-height: 20px; padding: 0; color: var(--muted); }
+  .compose-row { display: flex; align-items: center; gap: 8px; }
+  .as {
+    position: relative;
+    flex-shrink: 0;
+    width: 36px;
+    height: 36px;
+  }
+  .as .avatar { width: 36px; height: 36px; font-size: 14px; }
+  .as select {
+    position: absolute;
+    inset: 0;
+    opacity: 0;
+    cursor: pointer;
+    font-size: 16px;
+  }
+  .as::after {
+    content: "";
+    position: absolute;
+    right: -2px;
+    bottom: -2px;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: var(--bg) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10'%3E%3Cpath d='M2 3.5 5 6.5 8 3.5' fill='none' stroke='%238e8e93' stroke-width='1.6' stroke-linecap='round'/%3E%3C/svg%3E") center/10px no-repeat;
+    box-shadow: 0 0 0 0.5px var(--hairline);
+    pointer-events: none;
+  }
+  .field {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    min-height: 36px;
+    border: 1px solid var(--hairline);
+    border-radius: 18px;
+    padding: 0 3px 0 14px;
+    background: var(--bg);
+  }
+  .field input {
+    flex: 1;
+    min-width: 0;
+    border: 0;
+    outline: 0;
+    background: transparent;
+    color: var(--text);
+    font: inherit;
+    padding: 7px 0;
+  }
+  .field input::placeholder { color: var(--muted); }
+  .send {
+    width: 29px;
+    height: 29px;
+    border-radius: 50%;
+    border: 0;
+    background: var(--blue);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    transition: transform 0.15s ease, opacity 0.15s ease;
+  }
+  .send svg { fill: #fff; }
+  .send:disabled { opacity: 0; transform: scale(0.6); pointer-events: none; }
+  .as-label { font-size: 11px; color: var(--muted); margin: 6px 0 0 4px; }
+  .as-label b { color: var(--text); font-weight: 600; }
+
+  /* ───────────── tapback menu ───────────── */
+  .backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.12);
+    backdrop-filter: blur(2px);
+    -webkit-backdrop-filter: blur(2px);
+    z-index: 10;
+  }
+  .backdrop[hidden] { display: none; }
+  .menu {
+    position: fixed;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    z-index: 11;
+    animation: pop 0.16s ease-out;
+  }
+  .menu[hidden] { display: none; }
+  @keyframes pop { from { transform: scale(0.85); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+  .reactions {
+    display: flex;
+    gap: 4px;
+    padding: 6px;
+    background: var(--card);
+    border-radius: 26px;
+    box-shadow: 0 8px 28px rgba(0, 0, 0, 0.2);
+  }
+  .reactions button {
+    width: 42px;
+    height: 42px;
+    border: 0;
+    border-radius: 50%;
+    background: transparent;
+    font-size: 24px;
+    padding: 0;
+    transition: transform 0.12s ease;
+  }
+  .reactions button:hover { transform: scale(1.15); }
+  .reactions button.on { background: var(--blue); }
+  .actions {
+    background: var(--card);
+    border-radius: 14px;
+    box-shadow: 0 8px 28px rgba(0, 0, 0, 0.2);
+    overflow: hidden;
+    width: 180px;
+  }
+  .actions button {
+    width: 100%;
+    border: 0;
+    background: transparent;
+    padding: 11px 16px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 16px;
+  }
+  .actions svg { fill: var(--text); }
+
+  /* ───────────── control panel ───────────── */
+  .panel {
+    width: 340px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    font-size: 14px;
+  }
+  .card {
+    background: var(--card);
+    border-radius: 16px;
+    padding: 16px;
+    box-shadow: 0 0 0 0.5px var(--hairline);
+  }
+  .card h2 {
+    margin: 0 0 10px;
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+    color: var(--muted);
+  }
+  .clock-time { font-size: 34px; font-weight: 700; letter-spacing: -0.6px; font-variant-numeric: tabular-nums; }
+  .clock-date { color: var(--muted); margin-top: 2px; display: flex; gap: 8px; align-items: center; }
+  .ahead { background: var(--chip); color: var(--text); border-radius: 8px; padding: 1px 7px; font-size: 12px; font-weight: 600; }
+  .ff { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 14px; }
+  .btn {
+    border: 0;
+    border-radius: 10px;
+    padding: 9px 8px;
+    background: var(--chip);
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--blue);
+  }
+  .btn:disabled { opacity: 0.4; cursor: default; }
+  .btn.busy { opacity: 0.6; }
+  .btn.reset { width: 100%; margin-top: 8px; color: var(--red); }
+  .deadline-note { color: var(--muted); font-size: 13px; margin-top: 10px; min-height: 17px; }
+
+  .status { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+  .pill { border-radius: 999px; padding: 3px 10px; font-size: 12px; font-weight: 600; background: var(--chip); }
+  .pill.proposed { background: color-mix(in srgb, var(--blue) 16%, transparent); color: var(--blue); }
+  .pill.locked { background: color-mix(in srgb, var(--green) 18%, transparent); color: var(--green); }
+  .pill.failed { background: color-mix(in srgb, var(--red) 16%, transparent); color: var(--red); }
+  .activity { font-weight: 600; text-transform: capitalize; }
+  .option { padding: 10px 0; border-top: 0.5px solid var(--hairline); }
+  .option:first-of-type { border-top: 0; padding-top: 2px; }
+  .option-label { font-weight: 600; }
+  .option-label span { color: var(--muted); font-weight: 500; margin-right: 6px; }
+  .votes { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+  .vote { background: var(--chip); border-radius: 8px; padding: 2px 7px; font-size: 12px; }
+  .vote.pending { color: var(--muted); }
+  .locked-line { font-weight: 600; margin-bottom: 4px; }
+  .muted { color: var(--muted); }
+  .suggest { margin-top: 10px; }
+  .suggest button { border: 0; background: var(--chip); border-radius: 10px; padding: 7px 10px; font-size: 13px; color: var(--blue); margin: 0 6px 6px 0; }
+
+  .dms { display: flex; flex-direction: column; gap: 10px; max-height: 260px; overflow-y: auto; }
+  .dm { display: flex; gap: 10px; }
+  .dm-body { flex: 1; min-width: 0; }
+  .dm-head { display: flex; justify-content: space-between; font-size: 12px; color: var(--muted); }
+  .dm-head b { color: var(--text); }
+  .dm-text { margin-top: 2px; font-size: 13px; overflow-wrap: anywhere; }
+  .members { display: flex; flex-direction: column; gap: 8px; }
+  .member { display: flex; align-items: center; gap: 10px; }
+  .member .num { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; margin-left: auto; }
+  .tips { color: var(--muted); font-size: 13px; line-height: 1.5; margin: 0; padding-left: 18px; }
+
+  .toast {
+    position: fixed;
+    left: 50%;
+    bottom: 24px;
+    transform: translateX(-50%);
+    background: rgba(30, 30, 32, 0.92);
+    color: #fff;
+    padding: 9px 16px;
+    border-radius: 12px;
+    font-size: 14px;
+    z-index: 20;
+  }
+  .toast[hidden] { display: none; }
+
+  @media (max-width: 800px) {
+    .stage { flex-direction: column; align-items: center; padding: 0 0 24px; gap: 16px; }
+    .phone { width: 100%; height: 100vh; height: 100dvh; border-radius: 0; box-shadow: none; }
+    .statusbar { display: none; }
+    .chat-header { padding-top: 12px; }
+    .panel { width: 100%; padding: 0 16px; }
+  }
+</style>
+</head>
+<body>
+<div class="stage">
+  <main class="phone">
+    <div class="statusbar">
+      <span id="sb-time">9:41</span>
+      <span class="sb-icons" aria-hidden="true">
+        <svg width="18" height="12" viewBox="0 0 18 12"><rect x="0" y="8" width="3" height="4" rx="1"/><rect x="5" y="5.5" width="3" height="6.5" rx="1"/><rect x="10" y="3" width="3" height="9" rx="1"/><rect x="15" y="0" width="3" height="12" rx="1"/></svg>
+        <svg width="16" height="12" viewBox="0 0 16 12"><path d="M8 2.6c2.2 0 4.2.8 5.7 2.2l1.1-1.1A9.6 9.6 0 0 0 8 1 9.6 9.6 0 0 0 1.2 3.7l1.1 1.1A8 8 0 0 1 8 2.6Zm0 3.2c1.3 0 2.5.5 3.4 1.3l1.1-1.1A6.4 6.4 0 0 0 8 4.2c-1.7 0-3.3.6-4.5 1.8l1.1 1.1c.9-.8 2.1-1.3 3.4-1.3Zm0 3.2c-.5 0-1 .2-1.3.5L8 11l1.3-1.5c-.3-.3-.8-.5-1.3-.5Z"/></svg>
+        <svg width="27" height="13" viewBox="0 0 27 13"><rect x="0.5" y="0.5" width="22" height="12" rx="3.5" fill="none" stroke="currentColor" opacity=".4"/><rect x="2" y="2" width="19" height="9" rx="2"/><path d="M24 4.5v4c.8-.3 1.3-1.1 1.3-2s-.5-1.7-1.3-2Z" opacity=".4"/></svg>
+      </span>
+    </div>
+    <header class="chat-header">
+      <span class="back" aria-hidden="true"><svg width="12" height="20" viewBox="0 0 12 20"><path d="M10 2 2 10l8 8" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+      <div class="avatars" id="hdr-avatars"></div>
+      <div class="group-name"><span id="group-name">Group</span><svg width="7" height="10" viewBox="0 0 7 10"><path d="M1.5 1 5.5 5l-4 4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" style="stroke:var(--muted)"/></svg></div>
+    </header>
+    <section class="thread" id="thread">
+      <div id="messages"></div>
+      <div id="typing" hidden></div>
+    </section>
+    <footer class="composer">
+      <div class="replying" id="replying" hidden>
+        <span id="replying-text"></span>
+        <button id="cancel-reply" aria-label="Cancel reply">×</button>
+      </div>
+      <form class="compose-row" id="compose">
+        <label class="as" title="Who you're typing as">
+          <span class="avatar" id="as-avatar"></span>
+          <select id="as" aria-label="Typing as"></select>
+        </label>
+        <div class="field">
+          <input id="input" autocomplete="off" placeholder="iMessage">
+          <button class="send" id="send" type="submit" disabled aria-label="Send">
+            <svg width="14" height="16" viewBox="0 0 14 16"><path d="M7 0c.3 0 .6.1.8.3l5.6 5.6a1.1 1.1 0 0 1-1.6 1.6L8.1 3.8V15a1.1 1.1 0 0 1-2.2 0V3.8L2.2 7.5A1.1 1.1 0 0 1 .6 5.9L6.2.3C6.4.1 6.7 0 7 0Z"/></svg>
+          </button>
+        </div>
+      </form>
+      <div class="as-label">Typing as <b id="as-name"></b> · tap the avatar to switch</div>
+    </footer>
+  </main>
+
+  <aside class="panel">
+    <section class="card">
+      <h2>Demo clock</h2>
+      <div class="clock-time" id="clock-time">--:--</div>
+      <div class="clock-date"><span id="clock-date"></span><span class="ahead" id="clock-ahead" hidden></span></div>
+      <div class="ff">
+        <button class="btn" data-hours="1">+1 hour</button>
+        <button class="btn" data-hours="12">+12 hours</button>
+        <button class="btn" id="to-deadline">To deadline</button>
+      </div>
+      <div class="deadline-note" id="deadline-note"></div>
+      <button class="btn reset" id="reset">Reset chat</button>
+    </section>
+
+    <section class="card">
+      <h2>Plan</h2>
+      <div id="plan"></div>
+    </section>
+
+    <section class="card">
+      <h2>Direct messages from the bot</h2>
+      <div class="dms" id="dms"></div>
+    </section>
+
+    <section class="card">
+      <h2>Members</h2>
+      <div class="members" id="members"></div>
+    </section>
+
+    <section class="card">
+      <h2>Tips</h2>
+      <ul class="tips">
+        <li>Double-click, right-click, or long-press a bubble for 👍 👎 ❓.</li>
+        <li>Drag a bubble to the right to reply to it.</li>
+        <li>Everyone has a seeded calendar, so proposals skip busy times.</li>
+      </ul>
+    </section>
+  </aside>
+</div>
+
+<div class="backdrop" id="backdrop" hidden></div>
+<div class="menu" id="menu" hidden>
+  <div class="reactions" id="menu-reactions"></div>
+  <div class="actions">
+    <button id="menu-reply">Reply <svg width="16" height="14" viewBox="0 0 16 14"><path d="M6 1 1 6l5 5V7.5c4 0 6.8 1.2 9 4.5-.8-4.4-3.4-8-9-8.6V1Z"/></svg></button>
+  </div>
+</div>
+<div class="toast" id="toast" hidden></div>
+
+<script>
+(() => {
+  const TAPBACKS = ["👍", "👎", "❓"];
+  const COLORS = [
+    ["#ff9f0a", "#ff6a00"], ["#30d158", "#00a86b"], ["#bf5af2", "#8e44ff"],
+    ["#ff375f", "#e0245e"], ["#64d2ff", "#0a84ff"], ["#ffd60a", "#f4a100"],
+  ];
+  const GAP_MS = 30 * 60_000;
+  const $ = (id) => document.getElementById(id);
+
+  let S = null;            // latest server snapshot
+  let clockSkew = 0;       // simulated now − real now, from the last snapshot
+  let me = null;           // phone we're typing as
+  let replyTo = null;      // handle being replied to
+  let renderedKey = "";
+  let menuFor = null;
+  let typingUntil = 0;
+  let botCountAtSend = 0;
+
+  const store = {
+    get(k) { try { return localStorage.getItem(k); } catch { return null; } },
+    set(k, v) { try { localStorage.setItem(k, v); } catch {} },
+  };
+
+  // ───────────── helpers ─────────────
+  function el(tag, cls, text) {
+    const node = document.createElement(tag);
+    if (cls) node.className = cls;
+    if (text != null) node.textContent = text;
+    return node;
+  }
+  const botName = () => S.botName.charAt(0).toUpperCase() + S.botName.slice(1);
+  const nameOf = (phone) =>
+    phone === S.botNumber ? botName() : (S.users.find((u) => u.phone === phone)?.name ?? `…${phone.slice(-4)}`);
+  function avatar(phone, cls) {
+    const a = el("span", "avatar" + (cls ? " " + cls : ""));
+    if (phone === S.botNumber) {
+      a.style.background = "linear-gradient(180deg, #5e5ce6, #0a84ff)";
+      a.textContent = "📅";
+    } else {
+      const i = Math.max(0, S.users.findIndex((u) => u.phone === phone));
+      const [c1, c2] = COLORS[i % COLORS.length];
+      a.style.background = `linear-gradient(180deg, ${c1}, ${c2})`;
+      a.textContent = nameOf(phone).charAt(0);
+    }
+    return a;
+  }
+  const simNow = () => new Date(Date.now() + clockSkew);
+  const fmt = (opts) => new Intl.DateTimeFormat("en-US", { timeZone: S.timezone, ...opts });
+  const dayKey = (d) => fmt({ year: "numeric", month: "2-digit", day: "2-digit" }).format(d);
+  function stampLabel(d) {
+    const time = fmt({ hour: "numeric", minute: "2-digit" }).format(d);
+    const now = simNow();
+    if (dayKey(d) === dayKey(now)) return ["Today", time];
+    if (dayKey(d) === dayKey(new Date(now.getTime() - 86_400_000))) return ["Yesterday", time];
+    return [fmt({ weekday: "short", month: "short", day: "numeric" }).format(d), time];
+  }
+  function duration(ms) {
+    const mins = Math.max(0, Math.round(ms / 60_000));
+    const d = Math.floor(mins / 1440), h = Math.floor((mins % 1440) / 60), m = mins % 60;
+    if (d) return `${d}d ${h}h`;
+    if (h) return `${h}h ${m}m`;
+    return `${m}m`;
+  }
+  let toastTimer;
+  function toast(text) {
+    const t = $("toast");
+    t.textContent = text;
+    t.hidden = false;
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => (t.hidden = true), 3200);
+  }
+  async function api(path, body) {
+    const res = await fetch(path, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body ?? {}),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
+    return data;
+  }
+
+  // ───────────── thread ─────────────
+  function renderThread() {
+    const key = JSON.stringify([me, S.messages]);
+    if (key === renderedKey) return;
+    const grew = !renderedKey || JSON.parse(renderedKey)[1].length !== S.messages.length;
+    renderedKey = key;
+
+    const box = $("messages");
+    box.replaceChildren();
+    if (S.messages.length === 0) {
+      const hint = el("div", "empty-thread");
+      hint.append("Start the plan by mentioning the bot, like ");
+      hint.append(el("b", null, `@${S.botName} dinner next weekend`));
+      box.append(hint);
+    }
+
+    const msgs = S.messages;
+    const lastMine = msgs.findLastIndex((m) => m.from === me);
+    msgs.forEach((m, i) => {
+      const prev = msgs[i - 1], next = msgs[i + 1];
+      const at = new Date(m.sentAt);
+      const gapBefore = !prev || at - new Date(prev.sentAt) > GAP_MS;
+      const gapAfter = next && new Date(next.sentAt) - at > GAP_MS;
+      if (gapBefore) {
+        const [day, time] = stampLabel(at);
+        const stamp = el("div", "stamp");
+        stamp.append(el("b", null, day), " " + time);
+        box.append(stamp);
+      }
+      const mine = m.from === me;
+      const first = gapBefore || prev.from !== m.from || m.replyTo;
+      const last = !next || gapAfter || next.from !== m.from || next.replyTo;
+      const reactions = Object.entries(m.reactions);
+
+      const row = el("div", "row" + (mine ? " mine" : "") + (first ? " first" : "") + (reactions.length ? " reacted" : ""));
+      if (!mine && first) row.append(el("div", "sender", nameOf(m.from)));
+      if (m.replyTo) {
+        const original = msgs.find((o) => o.handle === m.replyTo);
+        if (original) row.append(el("div", "quote", `${nameOf(original.from)}: ${original.text}`));
+      }
+
+      const line = el("div", "line");
+      const icon = el("span", "swipe-icon");
+      icon.innerHTML = '<svg width="14" height="12" viewBox="0 0 16 14"><path d="M6 1 1 6l5 5V7.5c4 0 6.8 1.2 9 4.5-.8-4.4-3.4-8-9-8.6V1Z"/></svg>';
+      row.append(icon);
+      if (!mine) line.append(last ? avatar(m.from) : el("span", "avatar-slot"));
+
+      const bubble = el("div", "bubble" + (last ? " tail" : ""), m.text);
+      bubble.dataset.handle = m.handle;
+      if (reactions.length) bubble.append(tapbackBadges(reactions));
+      line.append(bubble);
+      row.append(line);
+      if (i === lastMine) row.append(el("div", "receipt", "Delivered"));
+      attachGestures(bubble, icon, m);
+      box.append(row);
+    });
+
+    renderTyping();
+    if (grew) scrollToBottom();
+  }
+
+  function tapbackBadges(reactions) {
+    const wrap = el("div", "tapbacks");
+    const byEmoji = new Map();
+    for (const [phone, emoji] of reactions) {
+      if (!byEmoji.has(emoji)) byEmoji.set(emoji, []);
+      byEmoji.get(emoji).push(phone);
+    }
+    for (const [emoji, phones] of byEmoji) {
+      const badge = el("span", "tapback" + (phones.includes(me) ? " by-me" : ""), emoji);
+      if (phones.length > 1) badge.append(el("small", null, String(phones.length)));
+      badge.title = phones.map(nameOf).join(", ");
+      wrap.append(badge);
+    }
+    return wrap;
+  }
+
+  function renderTyping() {
+    const typing = $("typing");
+    const botCount = S.messages.filter((m) => m.from === S.botNumber).length;
+    const show = Date.now() < typingUntil && botCount <= botCountAtSend;
+    if (show === !typing.hidden) return;
+    typing.hidden = !show;
+    typing.replaceChildren();
+    if (!show) return;
+    const row = el("div", "row first");
+    const line = el("div", "line");
+    const bubble = el("div", "bubble tail typing");
+    bubble.append(el("i"), el("i"), el("i"));
+    line.append(avatar(S.botNumber), bubble);
+    row.append(line);
+    typing.append(row);
+    scrollToBottom();
+  }
+
+  function scrollToBottom() {
+    const thread = $("thread");
+    requestAnimationFrame(() => (thread.scrollTop = thread.scrollHeight));
+  }
+
+  // Double-click / right-click / long-press opens tapbacks; drag right replies.
+  function attachGestures(bubble, icon, message) {
+    let startX = 0, startY = 0, dx = 0, dragging = false, pressTimer = null, pointerId = null;
+    const reset = () => {
+      clearTimeout(pressTimer);
+      bubble.classList.remove("dragging", "pressed");
+      bubble.style.transform = "";
+      icon.style.opacity = "";
+      icon.style.transform = "";
+      pointerId = null;
+    };
+    bubble.addEventListener("pointerdown", (e) => {
+      if (e.button !== 0) return;
+      pointerId = e.pointerId;
+      startX = e.clientX;
+      startY = e.clientY;
+      dx = 0;
+      dragging = false;
+      bubble.classList.add("pressed");
+      pressTimer = setTimeout(() => {
+        reset();
+        openMenu(message, bubble);
+      }, 450);
+    });
+    bubble.addEventListener("pointermove", (e) => {
+      if (e.pointerId !== pointerId) return;
+      const x = e.clientX - startX, y = e.clientY - startY;
+      if (!dragging && (Math.abs(x) > 8 || Math.abs(y) > 8)) {
+        clearTimeout(pressTimer);
+        bubble.classList.remove("pressed");
+        if (x > 8 && Math.abs(x) > Math.abs(y)) {
+          dragging = true;
+          bubble.classList.add("dragging");
+          bubble.setPointerCapture(e.pointerId);
+        } else {
+          pointerId = null;
+          return;
+        }
+      }
+      if (!dragging) return;
+      dx = Math.max(0, x);
+      const shift = Math.min(72, dx * 0.6);
+      bubble.style.transform = `translateX(${shift}px)`;
+      const progress = Math.min(1, shift / 44);
+      icon.style.opacity = String(progress);
+      icon.style.transform = `scale(${0.6 + 0.4 * progress})`;
+    });
+    const end = (e) => {
+      if (e.pointerId !== pointerId) return;
+      const swiped = dragging && dx * 0.6 >= 44;
+      reset();
+      if (swiped) startReply(message);
+    };
+    bubble.addEventListener("pointerup", end);
+    bubble.addEventListener("pointercancel", end);
+    bubble.addEventListener("dblclick", () => openMenu(message, bubble));
+    bubble.addEventListener("contextmenu", (e) => {
+      e.preventDefault();
+      reset();
+      openMenu(message, bubble);
+    });
+  }
+
+  // ───────────── tapback menu ─────────────
+  function openMenu(message, bubble) {
+    menuFor = message.handle;
+    const reactions = $("menu-reactions");
+    reactions.replaceChildren();
+    for (const emoji of TAPBACKS) {
+      const b = el("button", message.reactions[me] === emoji ? "on" : "", emoji);
+      b.setAttribute("aria-label", `React ${emoji}`);
+      b.onclick = () => react(emoji);
+      reactions.append(b);
+    }
+    const menu = $("menu");
+    $("backdrop").hidden = false;
+    menu.hidden = false;
+    const rect = bubble.getBoundingClientRect();
+    const box = menu.getBoundingClientRect();
+    const mine = message.from === me;
+    let left = mine ? rect.right - box.width : rect.left;
+    left = Math.min(Math.max(8, left), window.innerWidth - box.width - 8);
+    let top = rect.top - reactions.offsetHeight - 10;
+    if (top < 8) top = rect.bottom + 10;
+    top = Math.min(top, window.innerHeight - box.height - 8);
+    menu.style.left = `${left}px`;
+    menu.style.top = `${top}px`;
+    menu.style.alignItems = mine ? "flex-end" : "flex-start";
+  }
+  function closeMenu() {
+    menuFor = null;
+    $("menu").hidden = true;
+    $("backdrop").hidden = true;
+  }
+  async function react(emoji) {
+    const target = menuFor;
+    closeMenu();
+    try {
+      await api("/mock/api/react", { from: me, target, emoji });
+    } catch (err) {
+      toast(err.message);
+    }
+  }
+  $("backdrop").onclick = closeMenu;
+  $("menu-reply").onclick = () => {
+    const m = S.messages.find((x) => x.handle === menuFor);
+    closeMenu();
+    if (m) startReply(m);
+  };
+  document.addEventListener("keydown", (e) => {
+    if (e.key !== "Escape") return;
+    if (menuFor) closeMenu();
+    else if (replyTo) cancelReply();
+  });
+
+  // ───────────── composer ─────────────
+  function startReply(message) {
+    replyTo = message.handle;
+    const text = $("replying-text");
+    text.replaceChildren(el("b", null, nameOf(message.from)), " " + message.text);
+    $("replying").hidden = false;
+    $("input").focus();
+  }
+  function cancelReply() {
+    replyTo = null;
+    $("replying").hidden = true;
+  }
+  $("cancel-reply").onclick = cancelReply;
+
+  function setMe(phone) {
+    me = phone;
+    store.set("mock-chat-me", phone);
+    $("as").value = phone;
+    $("as-avatar").replaceWith(Object.assign(avatar(phone), { id: "as-avatar" }));
+    $("as-name").textContent = nameOf(phone);
+    if (S) renderThread();
+  }
+
+  const input = $("input");
+  input.addEventListener("input", () => ($("send").disabled = !input.value.trim()));
+  $("compose").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const text = input.value.trim();
+    if (!text) return;
+    const body = { from: me, text, replyTo };
+    input.value = "";
+    $("send").disabled = true;
+    cancelReply();
+    if (new RegExp(`(^|\\s)@${S.botName}\\b`, "i").test(text)) {
+      botCountAtSend = S.messages.filter((m) => m.from === S.botNumber).length;
+      typingUntil = Date.now() + 20_000;
+      setTimeout(() => S && renderTyping(), 20_100);
+    }
+    try {
+      await api("/mock/api/send", body);
+    } catch (err) {
+      input.value = text;
+      $("send").disabled = false;
+      typingUntil = 0;
+      toast(err.message);
+    }
+  });
+
+  // ───────────── panel ─────────────
+  function renderClock() {
+    if (!S) return;
+    const now = simNow();
+    const time = fmt({ hour: "numeric", minute: "2-digit" }).format(now);
+    $("clock-time").textContent = time;
+    $("sb-time").textContent = time.replace(/\s?[AP]M$/, "");
+    $("clock-date").textContent = fmt({ weekday: "long", month: "long", day: "numeric" }).format(now);
+    const ahead = $("clock-ahead");
+    ahead.hidden = clockSkew < 60_000;
+    ahead.textContent = `+${duration(clockSkew)}`;
+
+    const p = S.plan;
+    const open = p && ["collecting", "proposed", "organizer_pick"].includes(p.status);
+    $("to-deadline").disabled = !(open && p.deadline);
+    $("deadline-note").textContent =
+      open && p.deadline
+        ? `${p.status === "collecting" ? "Proposes" : "Voting closes"} in ${duration(Date.parse(p.deadline) - now)} · ${fmt({ weekday: "short", hour: "numeric", minute: "2-digit" }).format(new Date(p.deadline))}`
+        : "";
+  }
+
+  const STATUS = {
+    collecting: "Waiting on calendars",
+    proposed: "Voting",
+    organizer_pick: "Organizer picking",
+    locked: "Locked in",
+    failed: "No time found",
+  };
+  const VOTE_EMOJI = { yes: "👍", no: "👎", maybe: "❓" };
+
+  function renderPlan() {
+    const box = $("plan");
+    box.replaceChildren();
+    const p = S.plan;
+    if (!p) {
+      box.append(el("div", "muted", "No plan yet. Send a request from any member:"));
+      const suggest = el("div", "suggest");
+      for (const text of ["dinner next weekend", "lunch tomorrow", "drinks this weekend"]) {
+        const b = el("button", null, `@${S.botName} ${text}`);
+        b.onclick = () => {
+          input.value = `@${S.botName} ${text}`;
+          $("send").disabled = false;
+          input.focus();
+        };
+        suggest.append(b);
+      }
+      box.append(suggest);
+      return;
+    }
+    const status = el("div", "status");
+    status.append(el("span", "pill " + p.status, STATUS[p.status] ?? p.status));
+    status.append(el("span", "activity", p.activity));
+    if (p.status === "proposed") status.append(el("span", "muted", `Round ${p.round} of 3`));
+    box.append(status);
+    if (p.lockedLabel) box.append(el("div", "locked-line", `🎉 ${p.lockedLabel}`));
+
+    for (const o of p.options) {
+      const opt = el("div", "option");
+      const label = el("div", "option-label");
+      label.append(el("span", null, `Option ${o.optionNumber}`), o.label);
+      opt.append(label);
+      const votes = el("div", "votes");
+      for (const u of S.users) {
+        const v = o.votes.find((x) => x.name === u.name);
+        votes.append(el("span", "vote" + (v ? "" : " pending"), `${v ? VOTE_EMOJI[v.vote] : "…"} ${u.name}`));
+      }
+      opt.append(votes);
+      box.append(opt);
+    }
+  }
+
+  function renderDms() {
+    const box = $("dms");
+    box.replaceChildren();
+    if (S.directs.length === 0) {
+      box.append(el("div", "muted", "Reminders and other 1:1 messages show up here."));
+      return;
+    }
+    for (const d of [...S.directs].reverse()) {
+      const row = el("div", "dm");
+      const body = el("div", "dm-body");
+      const head = el("div", "dm-head");
+      const to = el("span");
+      to.append("To ", el("b", null, nameOf(d.to)));
+      head.append(to, el("span", null, fmt({ weekday: "short", hour: "numeric", minute: "2-digit" }).format(new Date(d.sentAt))));
+      body.append(head, el("div", "dm-text", d.text));
+      row.append(avatar(d.to), body);
+      box.append(row);
+    }
+  }
+
+  function renderStatic() {
+    $("group-name").textContent = S.groupName;
+    const hdr = $("hdr-avatars");
+    hdr.replaceChildren(...S.users.slice(0, 4).map((u) => avatar(u.phone)));
+    const select = $("as");
+    select.replaceChildren(...S.users.map((u) => Object.assign(el("option", null, `${u.name} (${u.phone})`), { value: u.phone })));
+    const members = $("members");
+    members.replaceChildren(
+      ...[...S.users.map((u) => u.phone), S.botNumber].map((phone) => {
+        const row = el("div", "member");
+        row.append(avatar(phone), el("span", null, nameOf(phone) + (phone === S.botNumber ? " (bot)" : "")), el("span", "num", phone));
+        return row;
+      }),
+    );
+    const saved = store.get("mock-chat-me");
+    setMe(S.users.some((u) => u.phone === saved) ? saved : S.users[0].phone);
+  }
+
+  function apply(snapshot) {
+    const firstLoad = !S;
+    S = snapshot;
+    clockSkew = Date.parse(S.now) - Date.now();
+    if (firstLoad) renderStatic();
+    renderThread();
+    renderTyping();
+    renderPlan();
+    renderDms();
+    renderClock();
+  }
+
+  async function busy(button, fn) {
+    button.classList.add("busy");
+    try {
+      apply(await fn());
+    } catch (err) {
+      toast(err.message);
+    } finally {
+      button.classList.remove("busy");
+    }
+  }
+  $("as").addEventListener("change", (e) => setMe(e.target.value));
+  for (const b of document.querySelectorAll("[data-hours]")) {
+    b.onclick = () => busy(b, () => api("/mock/api/fast-forward", { hours: Number(b.dataset.hours) }));
+  }
+  $("to-deadline").onclick = (e) => busy(e.currentTarget, () => api("/mock/api/fast-forward", { to: "deadline" }));
+  $("reset").onclick = (e) => {
+    if (!confirm("Clear the chat, the plan, and the demo clock?")) return;
+    cancelReply();
+    typingUntil = 0;
+    busy(e.currentTarget, () => api("/mock/api/reset"));
+  };
+
+  setInterval(renderClock, 1000);
+  fetch("/mock/api/state").then((r) => r.json()).then(apply);
+  const events = new EventSource("/mock/events");
+  events.onmessage = (e) => apply(JSON.parse(e.data));
+})();
+</script>
+</body>
+</html>

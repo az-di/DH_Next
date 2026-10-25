@@ -28,6 +28,8 @@ export interface CoordinatorDeps {
   timezone?: string;
   /** Whether calendars can be connected (Google configured). */
   calendarsEnabled?: boolean;
+  /** Free/busy lookup. Defaults to connected calendars; the /mock demo swaps in seeded data. */
+  loadAvailability?: typeof loadAvailability;
 }
 
 /**
@@ -42,6 +44,7 @@ export class Coordinator {
   private now: () => Date;
   private timezone: string;
   private calendarsEnabled: boolean;
+  private loadAvailability: typeof loadAvailability;
   private lock = new KeyedLock();
 
   constructor(deps: CoordinatorDeps) {
@@ -51,6 +54,7 @@ export class Coordinator {
     this.now = deps.now ?? (() => new Date());
     this.timezone = deps.timezone ?? config.defaultTimezone;
     this.calendarsEnabled = deps.calendarsEnabled ?? hasGoogle();
+    this.loadAvailability = deps.loadAvailability ?? loadAvailability;
   }
 
   // ───────────────────────────── inbound ─────────────────────────────
@@ -143,7 +147,7 @@ export class Coordinator {
     const now = this.now();
     const members = await this.repo.listMembers(plan.id);
     const roles = new Map(members.map((m) => [m.userId, m.role]));
-    const availability = await loadAvailability(
+    const availability = await this.loadAvailability(
       this.repo,
       members.map((m) => m.userId),
       new Date(plan.request.windowStart),
