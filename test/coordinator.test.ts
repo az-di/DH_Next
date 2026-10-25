@@ -143,6 +143,25 @@ test("chatter and second requests are handled politely", async () => {
   assert.match(messenger.outbox.at(-1)!.content, /still working on dinner/);
 });
 
+test("a DM gets a how-to reply instead of starting a plan", async () => {
+  const { repo, coordinator, messenger } = setup();
+  await coordinator.handleInbound(
+    parseInbound({ content: "hello?", from_number: ALICE, to_number: BOT, group_id: "", message_handle: "dm-1" }),
+  );
+  assert.equal(repo.plans.size, 0);
+  assert.equal(messenger.outbox.at(-1)?.to, ALICE);
+  assert.match(messenger.outbox.at(-1)!.content, /Add me to your group/);
+});
+
+test("a failed DM (e.g. allowlist rejection) doesn't break the plan", async () => {
+  const { messenger, send, plan } = setup();
+  messenger.sendDirect = async () => {
+    throw new Error("Target not allowed for this project");
+  };
+  await send(ALICE, "@planner dinner next weekend");
+  assert.equal((await plan()).status, "proposed");
+});
+
 test("organizer can mark people optional inline", () => {
   const { request, optionalPhones } = extractOptional("dinner next weekend optional: +15550000002, (555) 000-0003");
   assert.equal(request, "dinner next weekend");

@@ -45,6 +45,8 @@ export function renderTemplate(m: BotMessage): string {
       return `I couldn't find a time for ${m.activity}. Mention me again with a different window and I'll try again.`;
     case "parse_failed":
       return `I didn't quite get that. Try something like "@planner dinner sometime next weekend".`;
+    case "dm_help":
+      return `Hi! I plan things for group chats. Add me to your group and say something like "@planner dinner sometime next weekend".`;
     case "already_open":
       return `I'm still working on ${m.activity}. Let's finish that one first!`;
   }

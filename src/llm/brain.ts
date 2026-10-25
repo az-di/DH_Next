@@ -30,6 +30,7 @@ export type BotMessage =
   | { kind: "organizer_pick"; activity: string; options: (SlotView & { yes: number; maybe: number })[] }
   | { kind: "failed"; activity: string }
   | { kind: "parse_failed" }
+  | { kind: "dm_help" }
   | { kind: "already_open"; activity: string };
 
 export interface Brain {

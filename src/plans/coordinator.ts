@@ -56,7 +56,12 @@ export class Coordinator {
   // ───────────────────────────── inbound ─────────────────────────────
 
   async handleInbound(msg: InboundMessage): Promise<void> {
-    if (msg.isOutbound || !msg.groupId || !msg.from) return; // MVP: group chats only
+    if (msg.isOutbound || !msg.from) return;
+    if (!msg.groupId) {
+      // MVP plans live in group chats. A DM gets a pointer (and proves the line works).
+      if (msg.text && !msg.reaction) await this.sayDirect(msg.from, { kind: "dm_help" });
+      return;
+    }
     const groupId = msg.groupId;
     await this.lock.run(groupId, async () => {
       const sender = await this.repo.upsertUserByPhone(msg.from);
@@ -424,8 +429,17 @@ export class Coordinator {
     return this.messenger.sendGroup(groupId, await this.brain.compose(message));
   }
 
+  /**
+   * DMs are best-effort: a failed calendar link or reminder (e.g. Photon's
+   * shared-pool allowlist rejecting an unregistered number) must not break the plan.
+   */
   private async sayDirect(phone: string, message: BotMessage) {
-    return this.messenger.sendDirect(phone, await this.brain.compose(message));
+    try {
+      return await this.messenger.sendDirect(phone, await this.brain.compose(message));
+    } catch (err) {
+      console.error(`[coordinator] direct message to ${phone} failed:`, err);
+      return null;
+    }
   }
 }
 

@@ -1,18 +1,57 @@
-import { config } from "./config.ts";
+import { config, hasPhoton, hasSendblue } from "./config.ts";
 import { createRepo } from "./db/index.ts";
 import { createBrain } from "./llm/index.ts";
-import { createMessenger } from "./messaging/sendblue.ts";
+import { createDeduper } from "./messaging/dedupe.ts";
+import { createPhotonTransport, type PhotonTransport } from "./messaging/photon.ts";
+import { ConsoleMessenger, SendblueMessenger, type Messenger } from "./messaging/sendblue.ts";
 import { Coordinator } from "./plans/coordinator.ts";
 import { createServer } from "./server.ts";
 
+// Pick the messaging provider: explicit MESSAGING_PROVIDER wins, otherwise the
+// first one with credentials (Photon, then Sendblue), otherwise log-only.
+const provider =
+  config.messagingProvider || (hasPhoton() ? "photon" : hasSendblue() ? "sendblue" : "console");
+
+let photon: PhotonTransport | undefined;
+let messenger: Messenger;
+if (provider === "photon") {
+  try {
+    photon = await createPhotonTransport();
+  } catch (err) {
+    console.error(`[photon] ${(err as Error).message}`);
+    process.exit(1);
+  }
+  messenger = photon.messenger;
+} else if (provider === "sendblue") {
+  messenger = new SendblueMessenger();
+} else {
+  console.warn("[messaging] no provider credentials — messages will be logged, not sent");
+  messenger = new ConsoleMessenger();
+}
+
 const repo = createRepo();
-const coordinator = new Coordinator({ repo, messenger: createMessenger(), brain: createBrain() });
-const app = createServer({ repo, coordinator });
+const coordinator = new Coordinator({ repo, messenger, brain: createBrain() });
+const app = createServer({ repo, coordinator, photon });
 
 app.listen(config.port, () => {
-  console.log(`[server] listening on :${config.port}`);
-  console.log(`[server] Sendblue webhook: ${config.publicBaseUrl}/webhooks/sendblue`);
+  console.log(`[server] listening on :${config.port} (messaging: ${provider})`);
+  if (provider === "sendblue") console.log(`[server] Sendblue webhook: ${config.publicBaseUrl}/webhooks/sendblue`);
+  if (photon && config.photon.inbound === "webhook") {
+    console.log(`[server] Photon webhook: ${config.publicBaseUrl}/webhooks/photon`);
+  }
 });
+
+// Photon stream mode: no public URL needed, the SDK holds a connection open.
+if (photon && config.photon.inbound === "stream") {
+  const firstTime = createDeduper();
+  console.log("[photon] listening for iMessages on the Spectrum stream");
+  photon
+    .listen((msg) => (firstTime(msg.messageHandle) ? coordinator.handleInbound(msg) : Promise.resolve()))
+    .catch((err) => {
+      console.error("[photon] inbound stream stopped:", err);
+      process.exit(1);
+    });
+}
 
 // Scheduler: reminders, deadlines, and round transitions. A single in-process
 // interval is enough for the MVP; move to a queue/cron when running >1 instance.
@@ -26,3 +65,10 @@ setInterval(async () => {
     ticking = false;
   }
 }, config.schedulerIntervalMs);
+
+for (const signal of ["SIGINT", "SIGTERM"] as const) {
+  process.once(signal, async () => {
+    await photon?.stop().catch(() => {});
+    process.exit(0);
+  });
+}

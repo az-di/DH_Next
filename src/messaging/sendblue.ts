@@ -1,4 +1,4 @@
-import { config, hasSendblue } from "../config.ts";
+import { config } from "../config.ts";
 
 // Sendblue REST client. Docs: https://docs.sendblue.com
 // Auth is two headers (sb-api-key-id / sb-api-secret-key) against api.sendblue.com.
@@ -70,10 +70,4 @@ export class ConsoleMessenger implements Messenger {
     if (process.env.NODE_ENV !== "test") console.log(`[sendblue:${kind} → ${to}] ${content}`);
     return { messageHandle, groupId: kind === "group" ? to : null };
   }
-}
-
-export function createMessenger(): Messenger {
-  if (hasSendblue()) return new SendblueMessenger();
-  console.warn("[sendblue] credentials not set — messages will be logged, not sent");
-  return new ConsoleMessenger();
 }
