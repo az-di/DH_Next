@@ -29,6 +29,9 @@ export const config = {
     clientSecret: env("GOOGLE_CLIENT_SECRET"),
   },
 
+  /** Signs the per-user "connect your calendar" links. Set a stable value in production. */
+  linkSecret: env("LINK_SECRET", "dev-only-link-secret"),
+
   anthropic: {
     apiKey: env("ANTHROPIC_API_KEY"),
   },
