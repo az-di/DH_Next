@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { Repo } from "./repo.ts";
+import { OPEN_STATUSES } from "../types.ts";
 import type {
   CalendarConnection,
   CandidateSlot,
@@ -78,14 +79,14 @@ export class MemoryRepo implements Repo {
   async getOpenPlanForGroup(groupId: string) {
     return (
       [...this.plans.values()].find(
-        (p) => p.groupId === groupId && (p.status === "collecting" || p.status === "proposed"),
+        (p) => p.groupId === groupId && OPEN_STATUSES.includes(p.status),
       ) ?? null
     );
   }
 
   async listOpenPlans() {
     return [...this.plans.values()].filter(
-      (p) => p.status === "collecting" || p.status === "proposed",
+      (p) => OPEN_STATUSES.includes(p.status),
     );
   }
 

@@ -1,7 +1,10 @@
 // Shared domain types. Field names mirror the Postgres columns in
 // supabase/migrations/001_init.sql (snake_case there, camelCase here).
 
-export type PlanStatus = "collecting" | "proposed" | "locked" | "failed";
+export type PlanStatus = "collecting" | "proposed" | "organizer_pick" | "locked" | "failed";
+
+/** Statuses where the plan is still in progress (at most one per group). */
+export const OPEN_STATUSES: PlanStatus[] = ["collecting", "proposed", "organizer_pick"];
 
 export type Vote = "yes" | "no" | "maybe";
 
@@ -45,7 +48,9 @@ export interface Plan {
   request: ParsedRequest;
   rawRequest: string;
   timezone: string;
-  deadline: string | null; // response deadline for the current round
+  /** collecting: when to stop waiting for calendar connections; proposed: response deadline. */
+  deadline: string | null;
+  roundStartedAt: string | null;
   lockedSlotId: string | null;
   createdAt: string;
   updatedAt: string;

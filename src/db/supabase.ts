@@ -1,5 +1,6 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import type { Repo } from "./repo.ts";
+import { OPEN_STATUSES } from "../types.ts";
 import type {
   CalendarConnection,
   CandidateSlot,
@@ -43,6 +44,7 @@ const toPlan = (r: Row): Plan => ({
   rawRequest: r.raw_request,
   timezone: r.timezone,
   deadline: r.deadline,
+  roundStartedAt: r.round_started_at,
   lockedSlotId: r.locked_slot_id,
   createdAt: r.created_at,
   updatedAt: r.updated_at,
@@ -58,6 +60,7 @@ const fromPlan = (p: Partial<Plan>): Row =>
     raw_request: p.rawRequest,
     timezone: p.timezone,
     deadline: p.deadline,
+    round_started_at: p.roundStartedAt,
     locked_slot_id: p.lockedSlotId,
   });
 
@@ -174,7 +177,7 @@ export class SupabaseRepo implements Repo {
         .from("plans")
         .select()
         .eq("group_id", groupId)
-        .in("status", ["collecting", "proposed"])
+        .in("status", OPEN_STATUSES)
         .maybeSingle(),
     );
     return data ? toPlan(data) : null;
@@ -182,7 +185,7 @@ export class SupabaseRepo implements Repo {
 
   async listOpenPlans() {
     const data = must(
-      await this.db.from("plans").select().in("status", ["collecting", "proposed"]),
+      await this.db.from("plans").select().in("status", OPEN_STATUSES),
     );
     return (data as Row[]).map(toPlan);
   }

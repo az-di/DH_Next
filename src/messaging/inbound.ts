@@ -14,6 +14,8 @@ export interface InboundReaction {
 export interface InboundMessage {
   messageHandle: string;
   from: string;
+  /** The Sendblue line that received this message (the bot itself). */
+  botNumber: string | null;
   groupId: string | null;
   participants: string[];
   text: string;
@@ -43,6 +45,7 @@ export function parseInbound(body: Record<string, any>): InboundMessage {
   return {
     messageHandle: String(body.message_handle ?? ""),
     from: String(body.from_number ?? body.number ?? ""),
+    botNumber: body.sendblue_number ?? body.to_number ?? null,
     groupId: body.group_id ? String(body.group_id) : null,
     participants: Array.isArray(body.participants) ? body.participants.map(String) : [],
     text,
