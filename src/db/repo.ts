@@ -4,6 +4,7 @@ import type {
   MemberRole,
   Plan,
   PlanMember,
+  Preferences,
   Response,
   User,
   Vote,
@@ -24,6 +25,10 @@ export interface Repo {
     conn: Omit<CalendarConnection, "id" | "createdAt">,
   ): Promise<CalendarConnection>;
   getCalendarConnection(userId: string): Promise<CalendarConnection | null>;
+
+  // manual preferences
+  getPreferences(userId: string): Promise<Preferences | null>;
+  savePreferences(userId: string, prefs: Preferences): Promise<Preferences>;
 
   // plans
   createPlan(plan: Omit<Plan, "id" | "createdAt" | "updatedAt">): Promise<Plan>;

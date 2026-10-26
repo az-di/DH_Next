@@ -1,4 +1,5 @@
-import type { MemberRole, ParsedRequest } from "../types.ts";
+import type { RoleStatement } from "../plans/roles.ts";
+import type { MemberRole, ParsedRequest, PreferenceUpdate } from "../types.ts";
 
 // The coordinator's interface to language: turning a request into structure,
 // and structure into friendly text. Claude implements it; templates + rules
@@ -44,9 +45,27 @@ export type BotMessage =
   /** One question covering every name the bot couldn't match. */
   | { kind: "role_question"; unknown: string[]; ambiguous: { name: string; options: string[] }[] }
   | { kind: "name_saved"; name: string; role: MemberRole | null; activity: string | null }
-  | { kind: "organizer_only"; organizerName: string };
+  | { kind: "organizer_only"; organizerName: string }
+  /** `summary` is describeUpdate() of what was saved, e.g. "never mornings, prefers evenings". */
+  | { kind: "preferences_saved"; name: string; summary: string }
+  /** A one-off "I can't do Saturday": the options it turned into a "no" (maybe none). */
+  | { kind: "constraint_noted"; name: string; optionNumbers: number[] }
+  | { kind: "nothing_scheduled" };
+
+/** What an @mention is, with the fields for that kind. */
+export type Interpretation =
+  /** "dinner next weekend", possibly with "Sam is optional" inline. */
+  | { kind: "request"; request: ParsedRequest; roles: RoleStatement[] }
+  /** "Sam is optional" on its own. */
+  | { kind: "roles"; roles: RoleStatement[] }
+  /** "I don't do mornings": the sender's standing schedule. */
+  | { kind: "preference"; update: PreferenceUpdate }
+  /** "I can't do this Saturday": windows (UTC ISO) that don't work, for the open plan only. */
+  | { kind: "constraint"; windows: { start: string; end: string }[] }
+  | { kind: "other" };
 
 export interface Brain {
-  parseRequest(text: string, opts: { now: Date; timezone: string }): Promise<ParsedRequest | null>;
+  /** One parse per @mention (the mention itself already stripped). */
+  interpret(text: string, opts: { now: Date; timezone: string }): Promise<Interpretation>;
   compose(message: BotMessage): Promise<string>;
 }

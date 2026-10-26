@@ -7,6 +7,7 @@ import type {
   MemberRole,
   Plan,
   PlanMember,
+  Preferences,
   Response,
   User,
   Vote,
@@ -18,6 +19,7 @@ const now = () => new Date().toISOString();
 export class MemoryRepo implements Repo {
   users = new Map<string, User>();
   connections = new Map<string, CalendarConnection>(); // by userId
+  preferences = new Map<string, Preferences>(); // by userId
   plans = new Map<string, Plan>();
   members: PlanMember[] = [];
   slots: CandidateSlot[] = [];
@@ -57,6 +59,15 @@ export class MemoryRepo implements Repo {
 
   async getCalendarConnection(userId: string) {
     return this.connections.get(userId) ?? null;
+  }
+
+  async getPreferences(userId: string) {
+    return this.preferences.get(userId) ?? null;
+  }
+
+  async savePreferences(userId: string, prefs: Preferences) {
+    this.preferences.set(userId, prefs);
+    return prefs;
   }
 
   async createPlan(plan: Omit<Plan, "id" | "createdAt" | "updatedAt">) {

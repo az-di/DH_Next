@@ -84,6 +84,14 @@ export function renderTemplate(m: BotMessage): string {
       return m.role && m.activity
         ? `Thanks, ${m.name}! You're ${m.role === "optional" ? "optional" : "required"} for ${m.activity}.`
         : `Nice to meet you, ${m.name}!`;
+    case "preferences_saved":
+      return `Saved for ${m.name}: ${m.summary}.`;
+    case "constraint_noted":
+      return m.optionNumbers.length
+        ? `Got it, ${m.name}: marked you as a no for ${m.optionNumbers.length === 1 ? "option" : "options"} ${list(m.optionNumbers.map(String))}.`
+        : `Noted, ${m.name}. None of the current options are then.`;
+    case "nothing_scheduled":
+      return `There's nothing scheduled right now. Start a plan with "@planner dinner next weekend".`;
     case "organizer_only":
       return `Only ${m.organizerName}, who started this plan, can change who's required.`;
   }
