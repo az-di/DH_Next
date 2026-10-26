@@ -3,15 +3,20 @@ import type { BotMessage } from "./brain.ts";
 // Deterministic copy for every bot message. Used directly when Claude isn't
 // configured, and as the fallback when a Claude call fails.
 
-const list = (names: string[]) =>
-  names.length <= 1 ? names.join("") : `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`;
+const list = (names: string[], joiner = "and") =>
+  names.length <= 1 ? names.join("") : `${names.slice(0, -1).join(", ")} ${joiner} ${names.at(-1)}`;
+const orList = (names: string[]) => list(names, "or");
 
 export function renderTemplate(m: BotMessage): string {
   switch (m.kind) {
-    case "ack":
-      return m.unconnectedNames.length
-        ? `On it! Looking for ${m.activity} times ${m.windowLabel}. ${list(m.unconnectedNames)}, I sent you a link to connect your calendar, which makes this faster.`
-        : `On it! Looking for ${m.activity} times ${m.windowLabel}.`;
+    case "ack": {
+      let text = `On it! Looking for ${m.activity} times ${m.windowLabel}.`;
+      if (m.optionalNames?.length) text += ` ${list(m.optionalNames)} ${m.optionalNames.length === 1 ? "is" : "are"} optional.`;
+      if (m.unconnectedNames.length) {
+        text += ` ${list(m.unconnectedNames)}, I sent you a link to connect your calendar, which makes this faster.`;
+      }
+      return text;
+    }
     case "connect_calendar":
       return `Hi${m.name ? ` ${m.name}` : ""}! Your group is planning ${m.activity}. Connect your calendar so I can skip times you're busy (I only see free/busy, never event details): ${m.url}`;
     case "proposal": {
@@ -29,6 +34,8 @@ export function renderTemplate(m: BotMessage): string {
     }
     case "reminder":
       return `Hey${m.name ? ` ${m.name}` : ""}, quick reminder to vote on ${m.activity} times in the group chat. Closes ${m.deadlineLabel}.`;
+    case "nudge":
+      return `Hey${m.name ? ` ${m.name}` : ""}, Option ${m.optionNumber} (${m.slotLabel}) is looking likely for ${m.activity}. Can you make it? Tap 👍/👎/❓ on it in the group chat by ${m.deadlineLabel}.`;
     case "locked": {
       let text = `🎉 Locked in: ${m.activity}, ${m.slotLabel}.`;
       if (m.maybeNames.length) text += ` ${list(m.maybeNames)} said maybe.`;
@@ -53,6 +60,32 @@ export function renderTemplate(m: BotMessage): string {
       return `Hi! I plan things for group chats. Add me to your group and say something like "@planner dinner sometime next weekend".`;
     case "already_open":
       return `I'm still working on ${m.activity}. Let's finish that one first!`;
+    case "roles_set": {
+      const parts = (["optional", "essential"] as const).flatMap((role) => {
+        const names = m.changes.filter((c) => c.role === role).map((c) => c.name);
+        if (!names.length) return [];
+        return [`${list(names)} ${names.length === 1 ? "is" : "are"} ${role === "optional" ? "optional" : "required"}`];
+      });
+      return `Got it: ${parts.join(", ")}.`;
+    }
+    case "role_question": {
+      const parts: string[] = [];
+      if (m.unknown.length) {
+        parts.push(
+          `I don't know who ${orList(m.unknown)} is yet. If that's you, reply "@planner I'm ${m.unknown.length === 1 ? m.unknown[0] : "<your name>"}".`,
+        );
+      }
+      for (const a of m.ambiguous) {
+        parts.push(`Which ${a.name} do you mean: ${orList(a.options)}? Reply "@planner" and their full name.`);
+      }
+      return parts.join(" ");
+    }
+    case "name_saved":
+      return m.role && m.activity
+        ? `Thanks, ${m.name}! You're ${m.role === "optional" ? "optional" : "required"} for ${m.activity}.`
+        : `Nice to meet you, ${m.name}!`;
+    case "organizer_only":
+      return `Only ${m.organizerName}, who started this plan, can change who's required.`;
   }
 }
 

@@ -226,3 +226,138 @@ test("organizer can mark people optional inline", () => {
   assert.equal(request, "dinner next weekend");
   assert.deepEqual([...optionalPhones], ["+15550000002", "+15550000003"]);
 });
+
+test("partial voters: 👎 on option 1 and a skip on option 2 holds the round; one nudge, no reminders or timeout", async () => {
+  const { repo, messenger, coordinator, send, plan, advance } = setup();
+  await send(ALICE, "@planner dinner next weekend");
+  const [first, second] = optionBubbles(messenger);
+  const tap = (from: string, reaction: string, bubble: typeof first) =>
+    send(from, "", { reaction, reply_to: { message_handle: bubble.messageHandle } });
+
+  await tap(ALICE, "dislike", first);
+  await tap(BOB, "like", second);
+  await tap(CARA, "like", second);
+  assert.equal((await plan()).status, "proposed", "Alice skipped option 2, so it can't lock early");
+
+  const p = await plan();
+  const span = Date.parse(p.deadline!) - Date.parse(p.roundStartedAt!);
+  advance(span * 0.5);
+  await coordinator.tick();
+  advance(span * 0.36);
+  await coordinator.tick();
+  const directs = () => messenger.outbox.filter((o) => o.kind === "direct");
+  assert.deepEqual(directs().map((o) => o.to), [ALICE], "only Alice, who skipped the leading option");
+  assert.match(directs()[0].content, /Option 2 .* is looking likely/);
+  assert.doesNotMatch(directs()[0].content, /reminder/);
+
+  advance(span * 0.2);
+  await coordinator.tick();
+  const done = await plan();
+  assert.equal(done.status, "locked");
+  assert.equal(repo.slots.find((s) => s.id === done.lockedSlotId)!.optionNumber, 2);
+  assert.ok(repo.members.every((m) => !m.timedOut), "nobody timed out");
+  assert.equal(directs().length, 1, "no 'went ahead' DMs");
+  assert.doesNotMatch(messenger.outbox.at(-1)!.content, /Didn't hear from/);
+});
+
+test("someone who voted on one option isn't reminded; someone who voted on none is", async () => {
+  const { messenger, coordinator, send, plan, advance } = setup();
+  await send(ALICE, "@planner dinner next weekend");
+  await send(ALICE, "1");
+  await send(BOB, "2 maybe");
+
+  const p = await plan();
+  const span = Date.parse(p.deadline!) - Date.parse(p.roundStartedAt!);
+  advance(span * 0.5);
+  await coordinator.tick();
+  const reminders = messenger.outbox.filter((o) => o.kind === "direct" && /reminder/.test(o.content));
+  assert.deepEqual(reminders.map((r) => r.to), [CARA]);
+});
+
+test("nudge is for essential members only and respects the 2-reminder cap", async () => {
+  const { repo, messenger, coordinator, send, plan, advance } = setup();
+  await send(ALICE, "@planner dinner next weekend optional: +15550000003");
+  await send(ALICE, "1");
+  await send(BOB, "2 maybe");
+  await send(CARA, "3");
+
+  const p = await plan();
+  const span = Date.parse(p.deadline!) - Date.parse(p.roundStartedAt!);
+  const bob = await repo.upsertUserByPhone(BOB);
+  await repo.updateMember(p.id, bob.id, { remindersSent: 2 }); // already used up
+  advance(span * 0.9);
+  await coordinator.tick();
+  assert.equal(messenger.outbox.filter((o) => o.kind === "direct").length, 0, "Bob is capped; Cara is optional");
+});
+
+const roleOf = async (repo: MemoryRepo, phone: string) => {
+  const user = await repo.upsertUserByPhone(phone);
+  return repo.members.find((m) => m.userId === user.id)!.role;
+};
+
+test("organizer marks people optional by name when starting a plan", async () => {
+  const { repo, messenger, send, plan } = setup();
+  await repo.upsertUserByPhone(CARA, { name: "Cara" });
+  await send(ALICE, "@planner dinner next weekend, Cara is optional");
+  assert.equal((await plan()).request.activity, "dinner", "the role clause isn't part of the request");
+  assert.equal(await roleOf(repo, CARA), "optional");
+  assert.equal(await roleOf(repo, BOB), "essential");
+  assert.match(messenger.outbox[0].content, /^On it! .* Cara is optional\./);
+});
+
+test("mid-plan role change by name settles the round when the rest already agreed", async () => {
+  const { repo, messenger, send, plan } = setup();
+  await repo.upsertUserByPhone(BOB, { name: "Bob" });
+  await repo.upsertUserByPhone(CARA, { name: "Cara" });
+  await send(ALICE, "@planner dinner next weekend");
+  await send(ALICE, "1");
+  assert.equal((await plan()).status, "proposed");
+
+  await send(BOB, "@planner Cara is optional");
+  assert.match(messenger.outbox.at(-1)!.content, /Only …0001, who started this plan/);
+  assert.equal(await roleOf(repo, CARA), "essential", "only the organizer can change roles");
+
+  await send(ALICE, "@planner Bob and Cara are optional");
+  assert.ok(messenger.outbox.some((o) => o.content === "Got it: Bob and Cara are optional."));
+  assert.equal((await plan()).status, "locked", "Alice is the only required member and said yes");
+});
+
+test("an unknown name is asked about once, then applied when that person introduces themselves", async () => {
+  const { repo, messenger, send } = setup();
+  await send(ALICE, "@planner dinner next weekend, Sam is optional");
+  const questions = () => messenger.outbox.filter((o) => /I don't know who Sam is yet/.test(o.content));
+  assert.equal(questions().length, 1);
+  assert.match(questions()[0].content, /reply "@planner I'm Sam"/);
+
+  await send(ALICE, "@planner Sam is optional");
+  assert.equal(questions().length, 1, "doesn't ask again");
+
+  await send(CARA, "@planner I'm Sam");
+  assert.equal((await repo.upsertUserByPhone(CARA)).name, "Sam");
+  assert.equal(await roleOf(repo, CARA), "optional");
+  assert.equal(messenger.outbox.at(-1)!.content, "Thanks, Sam! You're optional for dinner.");
+});
+
+test("an ambiguous name gets one question; the organizer answers with the full name", async () => {
+  const { repo, messenger, send, plan } = setup();
+  await repo.upsertUserByPhone(BOB, { name: "Sam Lee" });
+  await repo.upsertUserByPhone(CARA, { name: "Sam Patel" });
+  await send(ALICE, "@planner dinner next weekend");
+  await send(ALICE, "@planner sam is optional");
+  assert.match(messenger.outbox.at(-1)!.content, /^Which Sam do you mean: Sam Lee or Sam Patel\?/);
+  assert.equal(await roleOf(repo, BOB), "essential");
+
+  await send(ALICE, "@planner Sam Patel");
+  assert.equal(messenger.outbox.at(-1)!.content, "Got it: Sam Patel is optional.");
+  assert.equal(await roleOf(repo, CARA), "optional");
+  assert.equal(await roleOf(repo, BOB), "essential");
+  assert.deepEqual((await plan()).pendingRoles, []);
+});
+
+test("introducing yourself outside a plan just saves the name", async () => {
+  const { repo, messenger, send } = setup();
+  await send(BOB, "@planner my name is bob");
+  assert.equal((await repo.upsertUserByPhone(BOB)).name, "Bob");
+  assert.equal(messenger.outbox.at(-1)!.content, "Nice to meet you, Bob!");
+  assert.equal(repo.plans.size, 0);
+});

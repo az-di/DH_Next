@@ -17,6 +17,7 @@ const member = (userId: string, extra: Partial<PlanMember> = {}): PlanMember => 
   remindersSent: 0,
   lastRemindedAt: null,
   timedOut: false,
+  nudgedRound: null,
   ...extra,
 });
 const slot = (id: string, hour: number): CandidateSlot => ({
@@ -141,4 +142,26 @@ test("deadline decides without timed-out members", () => {
     members: [member("u1"), member("u2", { timedOut: true })],
   });
   assert.deepEqual(out, { type: "lock", slotId: "s1" });
+});
+
+test("early lock needs yes or maybe from every essential member; optional members don't hold it up", () => {
+  const out = evaluateRound({
+    ...base,
+    slots: [slot("s1", 18), slot("s2", 20)],
+    responses: [vote("u1", "s1", "yes"), vote("u2", "s1", "maybe")],
+    members: [member("u1"), member("u2"), member("u3", { role: "optional" })],
+  });
+  assert.deepEqual(out, { type: "lock", slotId: "s1" });
+});
+
+test("a skipped option is no response, not a no: no early lock, but it can win at the deadline", () => {
+  const input = {
+    ...base,
+    slots: [slot("s1", 18), slot("s2", 20)],
+    // u1 turns down s1 and skips s2; everyone else likes s2.
+    responses: [vote("u1", "s1", "no"), vote("u2", "s2", "yes"), vote("u3", "s2", "yes")],
+    members: [member("u1"), member("u2"), member("u3")],
+  };
+  assert.deepEqual(evaluateRound(input), { type: "wait" });
+  assert.deepEqual(evaluateRound({ ...input, deadlinePassed: true }), { type: "lock", slotId: "s2" });
 });

@@ -11,12 +11,14 @@ import { parseVotes, type ParsedVote } from "../messaging/votes.ts";
 import { formatDeadline, formatSlot } from "../time.ts";
 import type { CandidateSlot, MemberRole, Plan, PlanMember, User } from "../types.ts";
 import { KeyedLock } from "./lock.ts";
+import { extractRoles, isSelf, parseNameIntro, resolveName, type RoleStatement } from "./roles.ts";
 import {
   bestPartialOptions,
   COLLECTING_GRACE_MS,
   computeDeadline,
   decideOptionCount,
   evaluateRound,
+  leadingSlot,
   reminderDue,
 } from "./rules.ts";
 
@@ -72,7 +74,9 @@ export class Coordinator {
       const open = await this.repo.getOpenPlanForGroup(groupId);
 
       if (!msg.reaction && isMentioned(msg.text)) {
-        if (open) await this.say(groupId, { kind: "already_open", activity: open.request.activity });
+        const name = parseNameIntro(stripMention(msg.text));
+        if (name) await this.saveName(groupId, sender, name, open);
+        else if (open) await this.handleOpenMention(open, sender, stripMention(msg.text));
         else await this.startPlan(msg, sender);
         return;
       }
@@ -84,7 +88,8 @@ export class Coordinator {
 
   private async startPlan(msg: InboundMessage, organizer: User): Promise<void> {
     const groupId = msg.groupId!;
-    const { request: requestText, optionalPhones } = extractOptional(stripMention(msg.text));
+    const { request: withoutPhones, optionalPhones } = extractOptional(stripMention(msg.text));
+    const { request: requestText, statements } = extractRoles(withoutPhones);
     const request = await this.brain.parseRequest(requestText, { now: this.now(), timezone: this.timezone });
     if (!request) {
       await this.say(groupId, { kind: "parse_failed" });
@@ -106,6 +111,7 @@ export class Coordinator {
       deadline: null,
       roundStartedAt: null,
       lockedSlotId: null,
+      pendingRoles: [],
     });
 
     const unconnected: User[] = [];
@@ -115,13 +121,20 @@ export class Coordinator {
       await this.repo.addMember(plan.id, user.id, role);
       if (this.calendarsEnabled && !(await this.repo.getCalendarConnection(user.id))) unconnected.push(user);
     }
+    const roles = await this.applyRoles(plan, statements, organizer);
+    const optional = (await this.repo.listMembers(plan.id)).filter((m) => m.role === "optional");
+    const optionalNames = (await Promise.all(optional.map((m) => this.repo.getUser(m.userId)))).flatMap((u) =>
+      u ? [displayName(u)] : [],
+    );
 
     await this.say(groupId, {
       kind: "ack",
       activity: request.activity,
       windowLabel: windowLabel(request.windowStart, request.windowEnd, this.timezone),
       unconnectedNames: unconnected.map(displayName),
+      optionalNames,
     });
+    if (roles.question) await this.say(groupId, roles.question);
 
     if (unconnected.length === 0) {
       await this.proposeRound(plan, "confident");
@@ -139,6 +152,97 @@ export class Coordinator {
     await this.repo.updatePlan(plan.id, {
       deadline: new Date(this.now().getTime() + COLLECTING_GRACE_MS).toISOString(),
     });
+  }
+
+  // ───────────────────────────── roles ───────────────────────────────
+
+  /**
+   * Applies "Sam is optional"-style statements to plan members by name. Names
+   * that don't match exactly one member are kept as pending and asked about
+   * once, in a single question.
+   */
+  private async applyRoles(plan: Plan, statements: RoleStatement[], sender: User) {
+    const changes: { name: string; role: MemberRole }[] = [];
+    if (statements.length === 0) return { changes, question: null };
+    const members = await this.repo.listMembers(plan.id);
+    const people = (await Promise.all(members.map((m) => this.repo.getUser(m.userId)))).flatMap((u) => (u ? [u] : []));
+    let pending = [...plan.pendingRoles];
+    const unknown: string[] = [];
+    const ambiguous: { name: string; options: string[] }[] = [];
+
+    for (const { names, role } of statements) {
+      for (const name of names) {
+        const found = isSelf(name) ? { kind: "match" as const, user: sender } : resolveName(name, people);
+        if (found.kind === "match") {
+          await this.repo.updateMember(plan.id, found.user.id, { role });
+          changes.push({ name: displayName(found.user), role });
+          pending = pending.filter((p) => !p.candidates.includes(found.user.id) && !sameName(p.name, name));
+          continue;
+        }
+        const asked = pending.find((p) => sameName(p.name, name));
+        if (asked) {
+          asked.role = role; // already asked once; just keep the latest wish
+          continue;
+        }
+        const options = found.kind === "ambiguous" ? found.options : [];
+        pending.push({ name, role, candidates: options.map((u) => u.id) });
+        if (options.length) ambiguous.push({ name: titleCase(name), options: options.map(displayName) });
+        else unknown.push(titleCase(name));
+      }
+    }
+    await this.repo.updatePlan(plan.id, { pendingRoles: pending });
+    const question: BotMessage | null =
+      unknown.length || ambiguous.length ? { kind: "role_question", unknown, ambiguous } : null;
+    return { changes, question };
+  }
+
+  /** An @mention while a plan is open: a role change from the organizer, or a polite "busy". */
+  private async handleOpenMention(plan: Plan, sender: User, text: string): Promise<void> {
+    let { statements } = extractRoles(text);
+    // A bare name ("@planner Sam Patel") answers "Which Sam do you mean?"
+    if (statements.length === 0 && sender.id === plan.organizerId) {
+      const answer = await this.answerAmbiguous(plan, text);
+      if (answer) statements = [answer];
+    }
+    if (statements.length === 0) {
+      await this.say(plan.groupId, { kind: "already_open", activity: plan.request.activity });
+      return;
+    }
+    if (sender.id !== plan.organizerId) {
+      const organizer = await this.repo.getUser(plan.organizerId);
+      await this.say(plan.groupId, { kind: "organizer_only", organizerName: organizer ? displayName(organizer) : "the organizer" });
+      return;
+    }
+    const { changes, question } = await this.applyRoles(plan, statements, sender);
+    if (changes.length) await this.say(plan.groupId, { kind: "roles_set", changes });
+    if (question) await this.say(plan.groupId, question);
+    // Fewer required people can settle the current round.
+    if (changes.length && plan.status === "proposed") await this.advance(plan, false);
+  }
+
+  private async answerAmbiguous(plan: Plan, text: string): Promise<RoleStatement | null> {
+    for (const p of plan.pendingRoles.filter((p) => p.candidates.length > 1)) {
+      const options = (await Promise.all(p.candidates.map((id) => this.repo.getUser(id)))).flatMap((u) => (u ? [u] : []));
+      if (resolveName(text, options).kind === "match") return { names: [text], role: p.role };
+    }
+    return null;
+  }
+
+  /** "@planner I'm Sam": remember the name, and apply a role that was waiting on it. */
+  private async saveName(groupId: string, sender: User, name: string, open: Plan | null): Promise<void> {
+    const user = await this.repo.upsertUserByPhone(sender.phone, { name });
+    const isMember = open !== null && (await this.repo.listMembers(open.id)).some((m) => m.userId === user.id);
+    const waiting = isMember
+      ? open.pendingRoles.find((p) => p.candidates.length === 0 && resolveName(p.name, [user]).kind === "match")
+      : undefined;
+    if (!open || !waiting) {
+      await this.say(groupId, { kind: "name_saved", name, role: null, activity: null });
+      return;
+    }
+    await this.repo.updateMember(open.id, user.id, { role: waiting.role });
+    await this.repo.updatePlan(open.id, { pendingRoles: open.pendingRoles.filter((p) => p !== waiting) });
+    await this.say(groupId, { kind: "name_saved", name, role: waiting.role, activity: open.request.activity });
+    if (open.status === "proposed") await this.advance(open, false);
   }
 
   // ───────────────────────────── rounds ──────────────────────────────
@@ -293,7 +397,9 @@ export class Coordinator {
     const names = async (ids: string[]) =>
       (await Promise.all(ids.map((id) => this.repo.getUser(id)))).flatMap((u) => (u ? [displayName(u)] : []));
     const maybeIds = slotVotes.filter((r) => r.vote === "maybe").map((r) => r.userId);
-    const missing = members.filter((m) => !slotVotes.some((r) => r.userId === m.userId));
+    // "Didn't hear from" means no vote on any option that round, not just this one.
+    const roundSlotIds = new Set((await this.repo.listSlots(plan.id, slot.round)).map((s) => s.id));
+    const missing = members.filter((m) => !responses.some((r) => r.userId === m.userId && roundSlotIds.has(r.slotId)));
 
     const label = this.slotLabel(slot, plan);
     await this.say(plan.groupId, {
@@ -379,8 +485,9 @@ export class Coordinator {
       this.repo.listSlots(plan.id, plan.round),
       this.repo.listResponses(plan.id),
     ]);
+    // Voting on any option this round counts as answering; skipped options are just no response.
     const pending = members.filter(
-      (m) => !m.timedOut && slots.some((s) => !responses.some((r) => r.slotId === s.id && r.userId === m.userId)),
+      (m) => !m.timedOut && !slots.some((s) => responses.some((r) => r.slotId === s.id && r.userId === m.userId)),
     );
 
     if (now >= deadline) {
@@ -405,6 +512,31 @@ export class Coordinator {
       await this.repo.updateMember(plan.id, m.userId, {
         remindersSent: m.remindersSent + 1,
         lastRemindedAt: now.toISOString(),
+      });
+    }
+
+    // Essential members who answered but skipped the leading option get one nudge
+    // about it per round, on the reminder schedule and counting toward the cap.
+    const leading = leadingSlot(slots, responses, members);
+    if (!leading) return;
+    for (const m of members) {
+      if (m.role !== "essential" || m.timedOut || pending.includes(m) || m.nudgedRound === plan.round) continue;
+      if (responses.some((r) => r.slotId === leading.id && r.userId === m.userId)) continue;
+      if (reminderDue(m, roundStartedAt, deadline, now) === null) continue;
+      const user = await this.repo.getUser(m.userId);
+      if (!user) continue;
+      await this.sayDirect(user.phone, {
+        kind: "nudge",
+        name: user.name,
+        activity: plan.request.activity,
+        optionNumber: leading.optionNumber,
+        slotLabel: this.slotLabel(leading, plan),
+        deadlineLabel: formatDeadline(deadline, plan.timezone),
+      });
+      await this.repo.updateMember(plan.id, m.userId, {
+        remindersSent: m.remindersSent + 1,
+        lastRemindedAt: now.toISOString(),
+        nudgedRound: plan.round,
       });
     }
   }
@@ -450,6 +582,9 @@ export class Coordinator {
 function displayName(user: User): string {
   return user.name ?? `…${user.phone.slice(-4)}`;
 }
+
+const sameName = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
+const titleCase = (name: string) => name.replace(/\b\p{L}/gu, (c) => c.toUpperCase());
 
 function windowLabel(startIso: string, endIso: string, timezone: string): string {
   const fmt = new Intl.DateTimeFormat("en-US", { timeZone: timezone, weekday: "short", month: "short", day: "numeric" });

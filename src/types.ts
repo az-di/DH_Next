@@ -54,8 +54,21 @@ export interface Plan {
   deadline: string | null;
   roundStartedAt: string | null;
   lockedSlotId: string | null;
+  /** Role changes waiting on a name the bot couldn't match yet. */
+  pendingRoles: PendingRole[];
   createdAt: string;
   updatedAt: string;
+}
+
+/**
+ * "Sam is optional" where Sam was unknown (no candidates; applied when someone
+ * says "@planner I'm Sam") or ambiguous (candidates; applied when the
+ * organizer names one).
+ */
+export interface PendingRole {
+  name: string;
+  role: MemberRole;
+  candidates: string[]; // user ids
 }
 
 export interface PlanMember {
@@ -66,6 +79,8 @@ export interface PlanMember {
   lastRemindedAt: string | null;
   /** Set when the deadline passes without a reply; they are notified of the outcome and no longer block quorum. */
   timedOut: boolean;
+  /** Round in which they got a nudge about the leading option (at most one per round). */
+  nudgedRound: number | null;
 }
 
 export interface CandidateSlot {

@@ -93,6 +93,18 @@ export function tally(
   });
 }
 
+/** Best first: yes + ½ maybe, earliest on ties. */
+const byScore = (a: SlotTally, b: SlotTally) =>
+  b.score - a.score || Date.parse(a.slot.start) - Date.parse(b.slot.start);
+
+/** A slot no essential member said no to, with at least one yes/maybe. */
+const isViable = (t: SlotTally) => !t.essentialNo && t.yes + t.maybe > 0;
+
+/** The option that would win if the round closed now, or null if none is viable. */
+export function leadingSlot(slots: CandidateSlot[], responses: Response[], members: PlanMember[]): CandidateSlot | null {
+  return tally(slots, responses, members).filter(isViable).sort(byScore)[0]?.slot ?? null;
+}
+
 export type RoundOutcome =
   | { type: "wait" }
   | { type: "lock"; slotId: string }
@@ -102,12 +114,13 @@ export type RoundOutcome =
 /**
  * Decides what happens after a vote or a deadline.
  *
- * Quorum defaults to everyone: we wait until every active member (not timed
- * out) has voted on every option, unless the deadline passed. Shortcuts:
- * a slot everyone said yes to locks immediately; if every slot already has
- * an essential "no", there's nothing to wait for.
+ * Quorum defaults to everyone. Before the deadline there are two shortcuts:
+ * a slot every active essential member said yes or maybe to locks
+ * immediately; if every slot already has an essential "no", the round moves
+ * on. Otherwise we wait for the deadline.
  *
- * A slot is viable when no essential member said no and it has at least one
+ * An option someone skipped is "no response" from them, not a "no". A slot
+ * is viable when no essential member said no and it has at least one
  * yes/maybe. The best viable slot (yes + ½ maybe, earliest on ties) wins.
  */
 export function evaluateRound(input: {
@@ -121,23 +134,27 @@ export function evaluateRound(input: {
   if (slots.length === 0) return { type: input.round < MAX_ROUNDS ? "next_round" : "organizer_pick" };
 
   const active = members.filter((m) => !m.timedOut);
+  const essential = active.filter((m) => m.role === "essential");
+  // If everyone left is optional, they all count.
+  const quorum = essential.length ? essential : active;
   const voteOf = (userId: string, slotId: string) =>
     responses.find((r) => r.userId === userId && r.slotId === slotId)?.vote;
 
   const tallies = tally(slots, responses, members);
-  const byScore = (a: SlotTally, b: SlotTally) =>
-    b.score - a.score || Date.parse(a.slot.start) - Date.parse(b.slot.start);
 
-  const unanimous = tallies
-    .filter((t) => active.length > 0 && active.every((m) => voteOf(m.userId, t.slot.id) === "yes"))
+  const canMake = (userId: string, slotId: string) => {
+    const v = voteOf(userId, slotId);
+    return v === "yes" || v === "maybe";
+  };
+  const agreed = tallies
+    .filter((t) => quorum.length > 0 && quorum.every((m) => canMake(m.userId, t.slot.id)))
     .sort(byScore);
-  if (unanimous.length) return { type: "lock", slotId: unanimous[0].slot.id };
+  if (agreed.length) return { type: "lock", slotId: agreed[0].slot.id };
 
-  const allResponded = active.every((m) => slots.every((s) => voteOf(m.userId, s.id) !== undefined));
   const allBlocked = tallies.every((t) => t.essentialNo);
-  if (!allResponded && !input.deadlinePassed && !allBlocked) return { type: "wait" };
+  if (!input.deadlinePassed && !allBlocked) return { type: "wait" };
 
-  const viable = tallies.filter((t) => !t.essentialNo && t.yes + t.maybe > 0).sort(byScore);
+  const viable = tallies.filter(isViable).sort(byScore);
   if (viable.length) return { type: "lock", slotId: viable[0].slot.id };
   return { type: input.round < MAX_ROUNDS ? "next_round" : "organizer_pick" };
 }

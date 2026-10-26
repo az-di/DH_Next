@@ -1,4 +1,4 @@
-import type { ParsedRequest } from "../types.ts";
+import type { MemberRole, ParsedRequest } from "../types.ts";
 
 // The coordinator's interface to language: turning a request into structure,
 // and structure into friendly text. Claude implements it; templates + rules
@@ -13,7 +13,7 @@ export interface SlotView {
 }
 
 export type BotMessage =
-  | { kind: "ack"; activity: string; windowLabel: string; unconnectedNames: string[] }
+  | { kind: "ack"; activity: string; windowLabel: string; unconnectedNames: string[]; optionalNames?: string[] }
   | { kind: "connect_calendar"; name: string | null; url: string; activity: string }
   | {
       kind: "proposal";
@@ -25,13 +25,26 @@ export type BotMessage =
       reason: "confident" | "uncertain" | "after_no";
     }
   | { kind: "reminder"; name: string | null; activity: string; deadlineLabel: string; remaining: number }
+  | {
+      kind: "nudge";
+      name: string | null;
+      activity: string;
+      optionNumber: number;
+      slotLabel: string;
+      deadlineLabel: string;
+    }
   | { kind: "locked"; activity: string; slotLabel: string; maybeNames: string[]; missingNames: string[] }
   | { kind: "timed_out"; name: string | null; activity: string; slotLabel: string | null }
   | { kind: "organizer_pick"; activity: string; options: (SlotView & { yes: number; maybe: number })[] }
   | { kind: "failed"; activity: string }
   | { kind: "parse_failed" }
   | { kind: "dm_help" }
-  | { kind: "already_open"; activity: string };
+  | { kind: "already_open"; activity: string }
+  | { kind: "roles_set"; changes: { name: string; role: MemberRole }[] }
+  /** One question covering every name the bot couldn't match. */
+  | { kind: "role_question"; unknown: string[]; ambiguous: { name: string; options: string[] }[] }
+  | { kind: "name_saved"; name: string; role: MemberRole | null; activity: string | null }
+  | { kind: "organizer_only"; organizerName: string };
 
 export interface Brain {
   parseRequest(text: string, opts: { now: Date; timezone: string }): Promise<ParsedRequest | null>;

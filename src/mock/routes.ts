@@ -50,9 +50,10 @@ export function createMockRouter(deps: MockDemoDeps): Router {
   };
 
   const planSummary = async (plan: Plan) => {
-    const [slots, responses] = await Promise.all([
+    const [slots, responses, members] = await Promise.all([
       repo.listSlots(plan.id, plan.round),
       repo.listResponses(plan.id),
+      repo.listMembers(plan.id),
     ]);
     const label = (s: { start: string; end: string }) => formatSlot(new Date(s.start), new Date(s.end), plan.timezone);
     const locked = plan.lockedSlotId ? (await repo.listSlots(plan.id)).find((s) => s.id === plan.lockedSlotId) : null;
@@ -62,6 +63,7 @@ export function createMockRouter(deps: MockDemoDeps): Router {
       activity: plan.request.activity,
       deadline: plan.deadline,
       lockedLabel: locked ? label(locked) : null,
+      optionalPhones: members.filter((m) => m.role === "optional").map((m) => repo.users.get(m.userId)?.phone),
       options: slots.map((s) => ({
         optionNumber: s.optionNumber,
         label: label(s),

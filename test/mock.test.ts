@@ -208,3 +208,38 @@ test("mock fast-forward moves what \"tomorrow\" means", async (t) => {
   await until(() => chat.messages.some((m) => m.text.startsWith("Option ")), "a proposal");
   assert.equal(chat.messages.find((m) => m.text.startsWith("Option "))!.text, "Option 1: Fri, Oct 30, 11:00 PM–1:00 AM");
 });
+
+test("mock: Maya 👎s option 1 and skips option 2, so at +12h she gets one nudge about option 2", async (t) => {
+  const { chat, repo, post, close } = await startMock();
+  t.after(close);
+  const options = () => chat.messages.filter((m) => m.text.startsWith("Option "));
+
+  await post("/mock/api/send", { from: MAYA, text: "@planner dinner next weekend" });
+  await until(() => options().length === 2, "round 1");
+  const [first, second] = options();
+  await post("/mock/api/react", { from: MAYA, target: first.handle, emoji: "👎" });
+  for (const from of [JORDAN, PRIYA, SAM, THEO]) {
+    await post("/mock/api/react", { from, target: second.handle, emoji: "👍" });
+  }
+  await until(() => repo.responses.length === 5, "votes recorded");
+  assert.equal([...repo.plans.values()][0].status, "proposed", "no early lock");
+
+  await post("/mock/api/fast-forward", { hours: 12 });
+  const nudges = chat.directs.filter((d) => d.to === MAYA);
+  assert.equal(nudges.length, 1);
+  assert.match(nudges[0].text, /^Hey Maya, Option 2 \(.+\) is looking likely for dinner/);
+  assert.equal(chat.directs.length, 1, "nobody else is reminded");
+
+  await post("/mock/api/fast-forward", { hours: 9 }); // past the 85% reminder time
+  assert.equal(chat.directs.filter((d) => d.to === MAYA).length, 1, "once per round");
+});
+
+test("mock: the organizer can mark a member optional by name", async (t) => {
+  const { chat, repo, post, close } = await startMock();
+  t.after(close);
+  await post("/mock/api/send", { from: MAYA, text: "@planner dinner next weekend, Sam is optional" });
+  await until(() => chat.messages.some((m) => m.text.startsWith("Option ")), "a proposal");
+  const sam = [...repo.users.values()].find((u) => u.phone === SAM)!;
+  assert.equal(repo.members.find((m) => m.userId === sam.id)!.role, "optional");
+  assert.match(chat.messages.find((m) => m.from === MOCK_BOT)!.text, /Sam is optional\./);
+});

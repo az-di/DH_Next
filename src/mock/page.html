@@ -1031,7 +1031,8 @@
       const votes = el("div", "votes");
       for (const u of S.users) {
         const v = o.votes.find((x) => x.name === u.name);
-        votes.append(el("span", "vote" + (v ? "" : " pending"), `${v ? VOTE_EMOJI[v.vote] : "…"} ${u.name}`));
+        const optional = p.optionalPhones.includes(u.phone) ? " · optional" : "";
+        votes.append(el("span", "vote" + (v ? "" : " pending"), `${v ? VOTE_EMOJI[v.vote] : "…"} ${u.name}${optional}`));
       }
       opt.append(votes);
       box.append(opt);

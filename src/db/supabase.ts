@@ -46,6 +46,7 @@ const toPlan = (r: Row): Plan => ({
   deadline: r.deadline,
   roundStartedAt: r.round_started_at,
   lockedSlotId: r.locked_slot_id,
+  pendingRoles: r.pending_roles ?? [],
   createdAt: r.created_at,
   updatedAt: r.updated_at,
 });
@@ -62,6 +63,7 @@ const fromPlan = (p: Partial<Plan>): Row =>
     deadline: p.deadline,
     round_started_at: p.roundStartedAt,
     locked_slot_id: p.lockedSlotId,
+    pending_roles: p.pendingRoles,
   });
 
 const toMember = (r: Row): PlanMember => ({
@@ -71,6 +73,7 @@ const toMember = (r: Row): PlanMember => ({
   remindersSent: r.reminders_sent,
   lastRemindedAt: r.last_reminded_at,
   timedOut: r.timed_out,
+  nudgedRound: r.nudged_round ?? null,
 });
 
 const toSlot = (r: Row): CandidateSlot => ({
@@ -207,6 +210,7 @@ export class SupabaseRepo implements Repo {
       reminders_sent: patch.remindersSent,
       last_reminded_at: patch.lastRemindedAt,
       timed_out: patch.timedOut,
+      nudged_round: patch.nudgedRound,
     });
     const data = must(
       await this.db

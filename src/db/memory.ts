@@ -100,6 +100,7 @@ export class MemoryRepo implements Repo {
       remindersSent: 0,
       lastRemindedAt: null,
       timedOut: false,
+      nudgedRound: null,
     };
     this.members.push(member);
     return member;

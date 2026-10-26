@@ -106,14 +106,16 @@ voting style in this order (you plus one friend):
 
 | Who | Action | Expected |
 |---|---|---|
-| You | Tapback 👍 on the Option 1 bubble | Nothing posted. It's waiting for your friend. |
-| Friend | Reply `1 maybe, 2 yes` | Still nothing. No option has a yes from everyone, and not everyone has answered every option. |
-| You | Tapback ❓ on Option 1 | Still nothing. Your option 1 vote changes to maybe. |
-| You | Reply `2` | Option 2 now has a yes from everyone, so the bot posts **🎉 Locked in: lunch, …** with option 2's time. |
+| You | Tapback 👎 on the Option 2 bubble | Nothing posted. It's waiting for your friend. |
+| Friend | Reply `1 maybe, 2 yes` | Still nothing. You skipped option 1, which counts as no answer (not a no), and you said no to option 2. |
+| You | Reply `2` | Your option 2 vote changes to yes. Option 2 now has a yes or maybe from everyone, so the bot posts **🎉 Locked in: lunch, …** with option 2's time. |
 
-A yes from everyone locks right away. Otherwise the bot waits until everyone
-has answered every option, or until the deadline. Then it picks the best
-option that no essential member said no to, counting a maybe as half a yes.
+An option with a yes or maybe from every essential member locks right away.
+If every option has a no from an essential member, the bot moves to the next
+round. Otherwise it waits for the deadline, then picks the best option that no
+essential member said no to, counting a maybe as half a yes. Skipped options
+count as no answer, and anyone who voted on at least one option gets no
+reminders.
 
 ## 6. Rounds (optional)
 

@@ -119,8 +119,8 @@ export class ClaudeBrain implements Brain {
 
   async compose(message: BotMessage): Promise<string> {
     const draft = renderTemplate(message);
-    // Structured lists must stay exactly as formatted; only rephrase prose.
-    if (message.kind === "organizer_pick") return draft;
+    // Structured lists and exact reply formats must stay as written; only rephrase prose.
+    if (message.kind === "organizer_pick" || message.kind === "role_question") return draft;
 
     try {
       const response = await this.client.beta.messages.create({
