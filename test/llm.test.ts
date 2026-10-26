@@ -71,3 +71,46 @@ test("templates keep voting instructions and option format stable", () => {
   assert.match(text, /Thu 6:00 PM/);
   assert.equal(formatOption(2, "Sun, Nov 8, 6:00–8:00 PM"), "Option 2: Sun, Nov 8, 6:00–8:00 PM");
 });
+
+test("an explicit time replaces the activity's usual hours", () => {
+  const hours = (text: string) => {
+    const r = parse(text)!;
+    return [r.preferredStartHour, r.preferredEndHour];
+  };
+  assert.deepEqual(hours("dinner saturday"), [17, 22]);
+  assert.deepEqual(hours("dinner at 4pm saturday"), [16, 18]);
+  assert.deepEqual(hours("dinner at 8 saturday"), [20, 22], "no am/pm: whichever fits dinner");
+  assert.deepEqual(hours("breakfast at 8 tomorrow"), [8, 9]);
+  assert.deepEqual(hours("coffee around 3:15 friday"), [15, 16], "snapped to the half-hour grid");
+  assert.deepEqual(hours("hangout at 3 saturday"), [15, 16.5]);
+  assert.deepEqual(hours("brunch in the afternoon sunday"), [12, 17]);
+  assert.deepEqual(hours("dinner for 4 saturday"), [17, 22], "a party size isn't a time");
+  assert.deepEqual(hours("game night next weekend"), [17, 23]);
+});
+
+test("an explicit time is flagged, and one past midnight stretches the window", () => {
+  const late = parse("drinks at 11pm saturday")!;
+  assert.deepEqual([late.preferredStartHour, late.preferredEndHour, late.timeRequested], [23, 25, true]);
+  assert.deepEqual([local(late.windowEnd).day, local(late.windowEnd).hour], [1, 1], "Sun Nov 1, 1 AM");
+  assert.equal(parse("drinks saturday")!.timeRequested, undefined);
+  assert.equal(parse("brunch in the afternoon sunday")!.timeRequested, true);
+});
+
+test("later rounds acknowledge the last one didn't work, even with one option", () => {
+  const proposal = (count: number, reason: "confident" | "uncertain" | "after_no") =>
+    renderTemplate({
+      kind: "proposal",
+      activity: "dinner",
+      round: reason === "after_no" ? 2 : 1,
+      options: Array.from({ length: count }, (_, i) => ({ optionNumber: i + 1, label: `Option ${i + 1}` })),
+      deadlineLabel: "Thu 6:00 PM",
+      reason,
+    });
+  assert.equal(
+    proposal(1, "after_no"),
+    "That didn't work for everyone, so how about this for dinner instead? 👍 yes, 👎 no, ❓ maybe. Please answer by Thu 6:00 PM.",
+  );
+  assert.match(proposal(2, "after_no"), /^That didn't work for everyone, so here are 2 more for dinner\. Tap 👍\/👎\/❓/);
+  assert.match(proposal(1, "confident"), /^How about this for dinner\?/);
+  assert.match(proposal(3, "uncertain"), /^A few options for dinner\./);
+});

@@ -106,13 +106,13 @@ test("testing guide voting walkthrough locks option 2", async () => {
 
   await say(ME, "@planner lunch tomorrow");
   const bubbles = messenger.outbox.filter((o) => o.content.startsWith("Option "));
-  assert.equal(bubbles.length, 3);
+  assert.equal(bubbles.length, 2, "a 90-minute lunch fits twice between 11 and 2");
 
   await react(ME, "👍", bubbles[0].messageHandle);
   assert.equal(await status(), "proposed");
   await say(FRIEND, "1 maybe, 2 yes");
   assert.equal(await status(), "proposed");
-  await react(ME, "❓", bubbles[2].messageHandle);
+  await react(ME, "❓", bubbles[0].messageHandle); // changes my option 1 vote to maybe
   assert.equal(await status(), "proposed");
   await say(ME, "2");
   assert.equal(await status(), "locked");

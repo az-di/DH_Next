@@ -99,14 +99,16 @@ to confirm. Don't continue with group testing until that's settled.
 
 ## 5. Vote and lock a time
 
-With no calendars connected, the bot is unsure, so it sends 3 options. Test
-each voting style in this order (you plus one friend):
+With no calendars connected, the bot is unsure, so it sends several options.
+For lunch that's 2, because only two 90-minute lunches fit between 11 and 2
+(the bot never proposes times outside an activity's usual hours). Test each
+voting style in this order (you plus one friend):
 
 | Who | Action | Expected |
 |---|---|---|
 | You | Tapback 👍 on the Option 1 bubble | Nothing posted. It's waiting for your friend. |
 | Friend | Reply `1 maybe, 2 yes` | Still nothing. No option has a yes from everyone, and not everyone has answered every option. |
-| You | Tapback ❓ on Option 3 | Still nothing. |
+| You | Tapback ❓ on Option 1 | Still nothing. Your option 1 vote changes to maybe. |
 | You | Reply `2` | Option 2 now has a yes from everyone, so the bot posts **🎉 Locked in: lunch, …** with option 2's time. |
 
 A yes from everyone locks right away. Otherwise the bot waits until everyone

@@ -50,7 +50,8 @@ export const MOCK_USERS: MockUser[] = [
     busy: [
       { days: WEEKDAYS, from: 10, to: 18 },
       { days: [3], from: 19, to: 21 },
-      { days: [6], from: 17, to: 19.5 },
+      // Ends at 6 on Saturday, leaving room for a second dinner slot if round 1 is turned down.
+      { days: [6], from: 16, to: 18 },
     ],
   },
   {

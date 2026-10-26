@@ -28,6 +28,19 @@ export interface FindSlotsInput {
 
 const EARLIEST_REASONABLE_HOUR = 8;
 const LATEST_REASONABLE_END_HOUR = 23;
+/** Local hours for an activity with no usual time ("hangout"). */
+export const DEFAULT_ACTIVITY_HOURS = { from: 9, to: 22 };
+
+/**
+ * The local hours a slot must fit inside: the request's preferred hours (the
+ * activity's usual time, or the time the request explicitly asked for), else
+ * the default. Never narrower than the activity's duration.
+ */
+export function activityHours(request: ParsedRequest): { from: number; to: number } {
+  const { preferredStartHour: from, preferredEndHour: to } = request;
+  const hours = from !== null && to !== null && from < to ? { from, to } : DEFAULT_ACTIVITY_HOURS;
+  return { from: hours.from, to: Math.max(hours.to, hours.from + request.durationMinutes / 60) };
+}
 
 const overlaps = (a: { start: Date; end: Date }, b: { start: Date; end: Date }) =>
   a.start < b.end && b.start < a.end;
@@ -81,13 +94,18 @@ export function scoreSlots(input: FindSlotsInput): ScoredSlot[] {
     (entry): entry is [string, BusyBlock[]] => entry[1] !== null,
   );
 
+  const hours = activityHours(request);
   const results: ScoredSlot[] = [];
   for (; cursor + duration <= windowEnd; cursor += step) {
     const slot = { start: new Date(cursor), end: new Date(cursor + duration) };
 
     const startHour = localHour(slot.start, timezone);
     const endHour = startHour + request.durationMinutes / 60;
-    if (startHour < EARLIEST_REASONABLE_HOUR || endHour > LATEST_REASONABLE_END_HOUR) continue;
+    // The bot only picks reasonable hours on its own; a time the request asked for is honored.
+    const unreasonable = startHour < EARLIEST_REASONABLE_HOUR || endHour > LATEST_REASONABLE_END_HOUR;
+    if (unreasonable && !request.timeRequested) continue;
+    // Out-of-hours slots are dropped, not down-ranked: no 8 AM "dinner" in a later round.
+    if (startHour < hours.from || endHour > hours.to) continue;
     if (input.exclude?.some((x) => overlaps(x, slot))) continue;
 
     const busyUserIds = connected.filter(([, blocks]) => isBusy(blocks, slot)).map(([id]) => id);

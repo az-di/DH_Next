@@ -15,11 +15,15 @@ export function renderTemplate(m: BotMessage): string {
     case "connect_calendar":
       return `Hi${m.name ? ` ${m.name}` : ""}! Your group is planning ${m.activity}. Connect your calendar so I can skip times you're busy (I only see free/busy, never event details): ${m.url}`;
     case "proposal": {
+      // Later rounds say the last one didn't work, however many options there are.
+      const retry = m.reason === "after_no";
       const intro =
         m.options.length === 1
-          ? `How about this for ${m.activity}? 👍 yes, 👎 no, ❓ maybe.`
-          : m.reason === "after_no"
-            ? `That one didn't work, so here are ${m.options.length} more for ${m.activity}. Tap 👍/👎/❓ on each, or reply with the numbers that work.`
+          ? retry
+            ? `That didn't work for everyone, so how about this for ${m.activity} instead? 👍 yes, 👎 no, ❓ maybe.`
+            : `How about this for ${m.activity}? 👍 yes, 👎 no, ❓ maybe.`
+          : retry
+            ? `That didn't work for everyone, so here are ${m.options.length} more for ${m.activity}. Tap 👍/👎/❓ on each, or reply with the numbers that work.`
             : `A few options for ${m.activity}. Tap 👍/👎/❓ on each, or reply with the numbers that work (e.g. "1 3").`;
       return `${intro} Please answer by ${m.deadlineLabel}.`;
     }

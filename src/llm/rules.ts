@@ -97,12 +97,53 @@ export function parseRequestWithRules(
   const hasIntent = /\b(hang|hangout|meet|get together|plan|sometime|catch up)\b/.test(t);
   if (!activityKey && !hasTimeWords && !hasIntent) return null;
 
+  // Slots outside the preferred hours are never proposed, so an explicit ask
+  // ("at 4pm", "in the morning") replaces the activity's usual hours.
+  const asked = requestedHours(t, defaults);
+  // "Drinks at 11pm" runs past midnight: let the window cover the end of it.
+  if (asked && asked.to > 24) end = new Date(end.getTime() + (asked.to - 24) * 3_600_000);
   return {
     activity,
     windowStart: start.toISOString(),
     windowEnd: end.toISOString(),
     durationMinutes: defaults.durationMinutes,
-    preferredStartHour: defaults.preferredStartHour,
-    preferredEndHour: defaults.preferredEndHour,
+    preferredStartHour: asked?.from ?? defaults.preferredStartHour,
+    preferredEndHour: asked?.to ?? defaults.preferredEndHour,
+    ...(asked && { timeRequested: true }),
   };
+}
+
+const DAY_PARTS: [RegExp, { from: number; to: number }][] = [
+  [/\bmorning\b/, { from: 8, to: 12 }],
+  [/\bafternoon\b/, { from: 12, to: 17 }],
+  [/\bevening\b/, { from: 17, to: 22 }],
+];
+
+// "at 4", "around 7:30", "4pm", "at 7ish". A bare number needs at/around so "dinner for 4" isn't a time.
+const CLOCK_TIME = /\b(?:at|around)\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)?(?:ish)?\b|\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b/;
+
+/** Local hours the request explicitly asks for, or null to use the activity's usual hours. */
+function requestedHours(t: string, defaults: ActivityDefaults): { from: number; to: number } | null {
+  const duration = defaults.durationMinutes / 60;
+  const m = CLOCK_TIME.exec(t);
+  if (m) {
+    const hour = Number(m[1] ?? m[4]);
+    const minute = Number(m[2] ?? m[5] ?? 0);
+    const meridiem = m[3] ?? m[6];
+    if (hour >= 1 && hour <= 12 && minute < 60) {
+      let h: number;
+      if (meridiem) {
+        h = (hour % 12) + (meridiem === "pm" ? 12 : 0);
+      } else {
+        // "dinner at 8" is 8 PM, "breakfast at 8" is 8 AM: take whichever fits the activity.
+        const { preferredStartHour: from, preferredEndHour: to } = defaults;
+        const fits = [hour % 12, (hour % 12) + 12].find((c) => from !== null && to !== null && c >= from && c + duration <= to);
+        h = fits ?? (hour < 8 ? hour + 12 : hour);
+      }
+      // Snap to the half-hour grid slots are proposed on.
+      const start = Math.floor((h + minute / 60) * 2) / 2;
+      return { from: start, to: start + duration };
+    }
+  }
+  return DAY_PARTS.find(([re]) => re.test(t))?.[1] ?? null;
 }

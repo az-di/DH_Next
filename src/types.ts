@@ -37,6 +37,8 @@ export interface ParsedRequest {
   /** Preferred local hours, e.g. dinner → 17–22. Used for scoring, not filtering. */
   preferredStartHour: number | null;
   preferredEndHour: number | null;
+  /** The request named a time ("drinks at 11pm"), so its hours skip the 8 AM–11 PM limit. */
+  timeRequested?: boolean;
 }
 
 export interface Plan {

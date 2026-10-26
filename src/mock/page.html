@@ -1004,7 +1004,7 @@
     if (!p) {
       box.append(el("div", "muted", "No plan yet. Send a request from any member:"));
       const suggest = el("div", "suggest");
-      for (const text of ["dinner next weekend", "lunch tomorrow", "drinks this weekend"]) {
+      for (const text of ["dinner next weekend", "drinks this weekend", "game night next weekend"]) {
         const b = el("button", null, `@${S.botName} ${text}`);
         b.onclick = () => {
           input.value = `@${S.botName} ${text}`;

@@ -24,13 +24,24 @@ const RequestSchema = z.object({
   window_start_local: z.string().describe("Earliest acceptable start, local wall time 'YYYY-MM-DDTHH:mm'."),
   window_end_local: z.string().describe("Latest acceptable end, local wall time 'YYYY-MM-DDTHH:mm'."),
   duration_minutes: z.number().int(),
-  preferred_start_hour: z.number().int().nullable().describe("Local hour the activity usually starts (0-23), or null."),
-  preferred_end_hour: z.number().int().nullable().describe("Local hour it usually ends by (0-24), or null."),
+  preferred_start_hour: z
+    .number()
+    .int()
+    .nullable()
+    .describe("Earliest local start hour (0-23): the time the message asks for, else when the activity usually starts. Null if neither."),
+  preferred_end_hour: z
+    .number()
+    .int()
+    .nullable()
+    .describe("Local hour it must end by: asked-for start + duration (may pass 24 after midnight), else when the activity usually ends. Null if neither."),
+  time_requested: z.boolean().describe("True only if the message names a specific time or part of day."),
 });
 
 const PARSE_SYSTEM = `You turn a casual group-chat request into a scheduling window for a planning bot.
 
 Interpret relative dates ("next weekend", "Friday", "sometime this week") against the current local date and time you are given. Give the whole window people would consider, not a single time: for "dinner Saturday" the window is that Saturday from 00:00 to 24:00 and the preferred hours capture "dinner".
+
+Times outside the preferred hours are never proposed. Use the activity's usual hours (dinner 17-22, lunch 11-14, coffee 8-17), unless the message asks for a time or part of day ("dinner at 4", "brunch in the afternoon"): then set the preferred hours to cover exactly that and time_requested to true. If that time runs past midnight, extend the window end to cover it.
 
 Duration: use what the activity typically takes (dinner ~120, coffee ~60, a hike ~180) unless the message says otherwise. If no time frame is given, use the next 7 days. Never start the window in the past.`;
 
@@ -40,6 +51,7 @@ Rules:
 - One or two short sentences, casual and warm, at most one emoji.
 - Keep every fact from the draft exactly: names, times, dates, deadlines, URLs, and voting instructions (👍 yes, 👎 no, ❓ maybe; reply with numbers).
 - Don't add facts, options, or times that aren't in the draft.
+- If the draft says the last options didn't work, keep that acknowledgement (a short clause is enough).
 - Output only the message text.`;
 
 /** Wall-clock "YYYY-MM-DDTHH:mm" in `timezone` → UTC ISO string. */
@@ -97,6 +109,7 @@ export class ClaudeBrain implements Brain {
         durationMinutes: clamp(out.duration_minutes || defaults?.durationMinutes || 90, 15, 12 * 60),
         preferredStartHour: out.preferred_start_hour,
         preferredEndHour: out.preferred_end_hour,
+        ...(out.time_requested && { timeRequested: true }),
       };
     } catch (err) {
       console.error("[claude] parseRequest failed, using rules:", err);

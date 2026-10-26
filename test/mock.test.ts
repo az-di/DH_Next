@@ -101,10 +101,10 @@ test("mock chat runs a full plan through the real webhook path", async (t) => {
   assert.equal((await post("/mock/api/send", { from: MAYA, text: "@planner dinner next weekend" })).status, 200);
   const options = () => chat.messages.filter((m) => m.text.startsWith("Option "));
   await until(() => options().length === 2, "option bubbles");
-  // Priya is busy Saturday until 7:30 and Maya Sunday until 7, so the seeded calendars pick these.
+  // Priya is busy Saturday until 6 and Maya Sunday until 7, so the seeded calendars pick these.
   assert.deepEqual(
     options().map((m) => m.text),
-    ["Option 1: Sat, Nov 7, 7:30–9:30 PM", "Option 2: Sun, Nov 8, 7:00–9:00 PM"],
+    ["Option 1: Sat, Nov 7, 6:00–8:00 PM", "Option 2: Sun, Nov 8, 7:00–9:00 PM"],
   );
   const [opt1, opt2] = options();
 
@@ -127,8 +127,8 @@ test("mock chat runs a full plan through the real webhook path", async (t) => {
   // Deadline: decide without Theo and tell him directly.
   const done = await post("/mock/api/fast-forward", { to: "deadline" });
   assert.equal(done.body.plan.status, "locked");
-  assert.equal(done.body.plan.lockedLabel, "Sat, Nov 7, 7:30–9:30 PM");
-  assert.match(chat.messages.at(-1)!.text, /Locked in: dinner, Sat, Nov 7, 7:30–9:30 PM\. Didn't hear from Theo\./);
+  assert.equal(done.body.plan.lockedLabel, "Sat, Nov 7, 6:00–8:00 PM");
+  assert.match(chat.messages.at(-1)!.text, /Locked in: dinner, Sat, Nov 7, 6:00–8:00 PM\. Didn't hear from Theo\./);
   assert.equal(chat.directs.at(-1)!.to, THEO);
   assert.equal((await post("/mock/api/fast-forward", { to: "deadline" })).status, 409, "nothing left to wait for");
 
@@ -141,7 +141,8 @@ test("mock chat runs a full plan through the real webhook path", async (t) => {
   assert.equal(repo.users.size, MOCK_USERS.length, "fake users are kept");
 
   // A fresh plan works after reset (handles stay unique for the deduper).
-  await post("/mock/api/send", { from: JORDAN, text: "@planner lunch tomorrow" });
+  clock.advance(Date.parse("2026-10-28T17:00:00Z") - Date.now());
+  await post("/mock/api/send", { from: JORDAN, text: "@planner dinner next weekend" });
   await until(() => chat.messages.some((m) => m.text.startsWith("Option ")), "a new proposal");
 });
 
@@ -163,4 +164,47 @@ test("/mock isn't served unless the mock provider is on", async (t) => {
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   assert.equal((await fetch(`${base}/mock`)).status, 404);
   assert.equal((await fetch(`${base}/mock/api/reset`, { method: "POST" })).status, 404);
+});
+
+test("mock data: turning down round 1 gets a real dinner-time round 2", async (t) => {
+  const { chat, post, close } = await startMock();
+  t.after(close);
+  const options = () => chat.messages.filter((m) => m.text.startsWith("Option "));
+
+  await post("/mock/api/send", { from: MAYA, text: "@planner dinner next weekend" });
+  await until(() => options().length === 2, "round 1");
+  await post("/mock/api/send", { from: SAM, text: "none" });
+  await until(() => options().length === 3, "round 2");
+  assert.equal(options().at(-1)!.text, "Option 1: Sat, Nov 7, 8:00–10:00 PM");
+  assert.match(chat.messages.at(-2)!.text, /^That didn't work for everyone, so how about this for dinner instead\?/);
+  const round2 = options().at(-1)!;
+
+  for (const from of [MAYA, JORDAN, PRIYA, SAM, THEO]) {
+    await post("/mock/api/react", { from, target: round2.handle, emoji: "👍" });
+  }
+  await until(() => /Locked in: dinner, Sat, Nov 7, 8:00–10:00 PM/.test(chat.messages.at(-1)!.text), "lock in round 2");
+});
+
+test("mock data: turning down round 2 too leaves no dinner time, so the organizer picks", async (t) => {
+  const { chat, repo, post, close } = await startMock();
+  t.after(close);
+  const options = () => chat.messages.filter((m) => m.text.startsWith("Option "));
+
+  await post("/mock/api/send", { from: MAYA, text: "@planner dinner next weekend" });
+  await until(() => options().length === 2, "round 1");
+  await post("/mock/api/send", { from: SAM, text: "none" });
+  await until(() => options().length === 3, "round 2");
+  await post("/mock/api/send", { from: SAM, text: "none" });
+  await until(() => [...repo.plans.values()][0].status === "organizer_pick", "organizer pick");
+  assert.equal(options().length, 3, "no off-hours round 3");
+  assert.match(chat.messages.at(-1)!.text, /closest options\. Reply with a number/);
+});
+
+test("mock fast-forward moves what \"tomorrow\" means", async (t) => {
+  const { chat, post, close } = await startMock(); // Wed Oct 28
+  t.after(close);
+  await post("/mock/api/fast-forward", { hours: 24 }); // Thu Oct 29
+  await post("/mock/api/send", { from: MAYA, text: "@planner drinks at 11pm tomorrow" });
+  await until(() => chat.messages.some((m) => m.text.startsWith("Option ")), "a proposal");
+  assert.equal(chat.messages.find((m) => m.text.startsWith("Option "))!.text, "Option 1: Fri, Oct 30, 11:00 PM–1:00 AM");
 });
