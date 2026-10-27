@@ -107,3 +107,32 @@ export interface BusyBlock {
   start: Date;
   end: Date;
 }
+
+export type TimeOfDay = "morning" | "afternoon" | "evening" | "night";
+
+/** A weekly window in local hours, e.g. every Friday 21–24. 0 = Sunday. */
+export interface WeeklyBlock {
+  days: number[];
+  from: number;
+  to: number;
+}
+
+/**
+ * What someone told us about their schedule, in chat or on the connect page.
+ * Preferred times and days only affect scoring; `never` is a hard filter,
+ * treated like a busy block on their calendar.
+ */
+export interface Preferences {
+  preferredTimes: TimeOfDay[];
+  preferredDays: number[];
+  never: WeeklyBlock[];
+}
+
+/** A change parsed from one message. Fields left out stay as they were. */
+export interface PreferenceUpdate {
+  preferredTimes?: TimeOfDay[];
+  preferredDays?: number[];
+  never?: WeeklyBlock[];
+  /** "forget my preferences": start from empty before applying the rest. */
+  clear?: boolean;
+}

@@ -243,3 +243,33 @@ test("mock: the organizer can mark a member optional by name", async (t) => {
   assert.equal(repo.members.find((m) => m.userId === sam.id)!.role, "optional");
   assert.match(chat.messages.find((m) => m.from === MOCK_BOT)!.text, /Sam is optional\./);
 });
+
+test("mock: members carry a preferences link and summary, and chat preferences show up", async (t) => {
+  const { chat, base, post, close } = await startMock();
+  t.after(close);
+  const state = async () => (await (await fetch(`${base}/mock/api/state`)).json()) as any;
+  const theo = (await state()).users.find((u: any) => u.phone === THEO);
+  assert.equal(theo.preferences, null);
+  assert.equal((await fetch(`${base}${theo.prefsUrl}`)).status, 200);
+
+  await post("/mock/api/send", { from: THEO, text: "@planner I don't do mornings" });
+  await until(() => chat.messages.at(-1)?.text === "Saved for Theo: never mornings.", "confirmation");
+  assert.equal((await state()).users.find((u: any) => u.phone === THEO).preferences, "never mornings");
+});
+
+test("mock: reset chat keeps preferences and names; reset everything clears them", async (t) => {
+  const { chat, repo, post, close } = await startMock();
+  t.after(close);
+  await post("/mock/api/send", { from: THEO, text: "@planner I don't do mornings" });
+  await post("/mock/api/send", { from: SAM, text: "@planner call me Sammy" });
+  await until(() => repo.preferences.size === 1 && chat.messages.at(-1)?.text === "Nice to meet you, Sammy!", "saved");
+
+  await post("/mock/api/reset");
+  assert.equal(chat.messages.length, 0);
+  assert.equal(repo.preferences.size, 1, "plain reset keeps preferences");
+
+  const { body } = await post("/mock/api/reset", { everything: true });
+  assert.equal(repo.preferences.size, 0);
+  assert.equal([...repo.users.values()].find((u) => u.phone === SAM)!.name, "Sam", "seeded name restored");
+  assert.ok(body.users.every((u: any) => u.preferences === null));
+});

@@ -1,5 +1,5 @@
 import type { ParsedRequest } from "../types.ts";
-import { localParts, startOfLocalDay } from "../time.ts";
+import { localParts, startOfLocalDay, zonedTimeToUtc } from "../time.ts";
 
 // Rule-based request parser. Handles the common phrasings well enough for a
 // demo without an API key, and backs up Claude if a call fails.
@@ -146,4 +146,78 @@ function requestedHours(t: string, defaults: ActivityDefaults): { from: number; 
     }
   }
   return DAY_PARTS.find(([re]) => re.test(t))?.[1] ?? null;
+}
+
+// Words a request can be made of that the rules above fully understand.
+const KNOWN_REQUEST_WORDS = new Set(
+  [
+    "breakfast coffee boba tea brunch lunch dinner supper drink drinks beer beers bar happy hour movie movies film",
+    "hike hiking game games board call zoom facetime night",
+    "today tonight tomorrow weekend week next this sometime morning afternoon evening",
+    "lets let's let us we should could get grab go do have some a an the for on at around in plan hang hangout",
+    "out meet up catch together please maybe am pm ish",
+    ...DAY_NAMES,
+  ]
+    .join(" ")
+    .split(" "),
+);
+
+/**
+ * True when every word of the request is one the rules understand ("dinner
+ * next weekend", "drinks at 11pm tomorrow"), so their parse can be trusted
+ * without asking Claude. "Dinner after the 15th" isn't.
+ */
+export function requestFullyUnderstood(text: string): boolean {
+  const words = text.toLowerCase().replace(/[’]/g, "'").replace(/[.,!?;:]/g, " ").split(/\s+/).filter(Boolean);
+  return words.length > 0 && words.every((w) => KNOWN_REQUEST_WORDS.has(w) || /^\d{1,2}(:\d{2})?(am|pm)?(ish)?$/.test(w));
+}
+
+const ONE_OFF_NEGATIVE =
+  /\b(can't|cant|cannot|won't|wont|bad|busy|out|unavailable|not free|not available|doesn't work|doesnt work|don't work|dont work|won't work|no good)\b/;
+const ONE_OFF_PARTS: [RegExp, { from: number; to: number }][] = [
+  [/\bmorning\b/, { from: 5, to: 12 }],
+  [/\bafternoon\b/, { from: 12, to: 17 }],
+  [/\bevening\b/, { from: 17, to: 21 }],
+  [/\bnight\b/, { from: 17, to: 24 }],
+];
+
+/**
+ * A constraint about specific dates, not a standing preference: "I can't do
+ * this Saturday", "tomorrow morning is bad", "I'm out Friday night", "this
+ * weekend doesn't work". Returns the windows that don't work, or null.
+ */
+export function parseConstraintWithRules(
+  text: string,
+  { now, timezone }: { now: Date; timezone: string },
+): { start: string; end: string }[] | null {
+  const t = text.toLowerCase().replace(/[’]/g, "'");
+  if (!ONE_OFF_NEGATIVE.test(t) || ACTIVITY_ALIASES.some(([re]) => re.test(t))) return null;
+
+  const today = localParts(now, timezone).weekday;
+  const daysUntil = (weekday: number) => (weekday - today + 7) % 7;
+  let offsets: number[] | null = null;
+  if (/\btonight\b|\btoday\b/.test(t)) offsets = [0];
+  else if (/\btomorrow\b/.test(t)) offsets = [1];
+  else if (/\b(this|next)?\s*weekend\b/.test(t)) {
+    const sat = today === 0 ? -1 : daysUntil(6);
+    const base = /\bnext weekend\b/.test(t) ? sat + 7 : sat;
+    offsets = [base, base + 1].filter((o) => o >= 0);
+  } else {
+    // Singular day names only: "fridays" is a standing preference, handled elsewhere.
+    const named = DAY_NAMES.findIndex((d) => new RegExp(`\\b${d}\\b`).test(t));
+    if (named >= 0) offsets = [daysUntil(named) + (new RegExp(`\\bnext ${DAY_NAMES[named]}\\b`).test(t) ? 7 : 0)];
+  }
+  if (!offsets) return null;
+
+  const part = /\btonight\b/.test(t) ? { from: 17, to: 24 } : (ONE_OFF_PARTS.find(([re]) => re.test(t))?.[1] ?? { from: 0, to: 24 });
+  // Wall-clock hours on that local date, so a DST switch doesn't shift the window.
+  const at = (offset: number, hour: number) => {
+    if (hour >= 24) return startOfLocalDay(now, timezone, offset + 1);
+    const d = localParts(new Date(startOfLocalDay(now, timezone, offset).getTime() + 12 * 3_600_000), timezone);
+    return zonedTimeToUtc(d.year, d.month, d.day, hour, timezone);
+  };
+  return offsets.map((offset) => ({
+    start: at(offset, part.from).toISOString(),
+    end: at(offset, part.to).toISOString(),
+  }));
 }

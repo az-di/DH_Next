@@ -7,6 +7,7 @@ import type {
   MemberRole,
   Plan,
   PlanMember,
+  Preferences,
   Response,
   User,
   Vote,
@@ -32,6 +33,12 @@ const toConnection = (r: Row): CalendarConnection => ({
   accessToken: r.access_token,
   accessTokenExpiresAt: r.access_token_expires_at,
   createdAt: r.created_at,
+});
+
+const toPreferences = (r: Row): Preferences => ({
+  preferredTimes: r.preferred_times ?? [],
+  preferredDays: r.preferred_days ?? [],
+  never: r.never ?? [],
 });
 
 const toPlan = (r: Row): Plan => ({
@@ -150,6 +157,31 @@ export class SupabaseRepo implements Repo {
       await this.db.from("calendar_connections").select().eq("user_id", userId).maybeSingle(),
     );
     return data ? toConnection(data) : null;
+  }
+
+  async getPreferences(userId: string) {
+    const data = must(await this.db.from("user_preferences").select().eq("user_id", userId).maybeSingle());
+    return data ? toPreferences(data) : null;
+  }
+
+  async savePreferences(userId: string, prefs: Preferences) {
+    const data = must(
+      await this.db
+        .from("user_preferences")
+        .upsert(
+          {
+            user_id: userId,
+            preferred_times: prefs.preferredTimes,
+            preferred_days: prefs.preferredDays,
+            never: prefs.never,
+            updated_at: new Date().toISOString(),
+          },
+          { onConflict: "user_id" },
+        )
+        .select()
+        .single(),
+    );
+    return toPreferences(data);
   }
 
   async createPlan(plan: Omit<Plan, "id" | "createdAt" | "updatedAt">) {

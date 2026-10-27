@@ -170,3 +170,87 @@ test("an explicitly requested time skips the 8 AM–11 PM limit; times the bot p
   const early = slots({ ...drinks, windowEnd: "2026-11-08T08:00:00Z", durationMinutes: 60, preferredStartHour: 6, preferredEndHour: 10 });
   assert.deepEqual(early.map((s) => localHour(s.start, TZ)).sort(), [8, 8.5, 9]);
 });
+
+test("connect page asks what to call you, prefills a name set in chat, and saves it", async (t) => {
+  const { default: express } = await import("express");
+  const { config } = await import("../src/config.ts");
+  const { MemoryRepo } = await import("../src/db/memory.ts");
+  const { createCalendarRouter } = await import("../src/calendar/routes.ts");
+  const saved = { ...config.google };
+  Object.assign(config.google, { clientId: "client", clientSecret: "secret" });
+  const repo = new MemoryRepo();
+  const server = express().use(createCalendarRouter(repo)).listen(0);
+  t.after(() => {
+    server.close();
+    Object.assign(config.google, saved);
+  });
+  await new Promise((resolve) => server.once("listening", resolve));
+  const base = `http://127.0.0.1:${(server.address() as import("node:net").AddressInfo).port}`;
+
+  const user = await repo.upsertUserByPhone("+15550000009", { name: `Sam "<b>"` });
+  const token = createConnectToken(user.id);
+  const html = await (await fetch(`${base}/connect?t=${encodeURIComponent(token)}`)).text();
+  assert.match(html, /What should we call you\?/);
+  assert.match(html, /value="Sam &quot;&lt;b&gt;&quot;"/, "prefilled and escaped");
+
+  const submit = (name: string) =>
+    fetch(`${base}/connect`, { method: "POST", redirect: "manual", body: new URLSearchParams({ t: token, name }) });
+  const res = await submit("  Sam   Patel ");
+  assert.equal(res.status, 303);
+  assert.match(res.headers.get("location")!, /^https:\/\/accounts\.google\.com\//);
+  assert.equal(user.name, "Sam Patel");
+
+  await submit("");
+  assert.equal(user.name, "Sam Patel", "leaving it blank keeps the name");
+  assert.equal((await fetch(`${base}/connect`, { method: "POST", body: new URLSearchParams({ t: "bad" }) })).status, 400);
+});
+
+test("preferences form: prefilled from chat, saved on submit, and unusual blocks are kept", async (t) => {
+  const { default: express } = await import("express");
+  const { MemoryRepo } = await import("../src/db/memory.ts");
+  const { createCalendarRouter } = await import("../src/calendar/routes.ts");
+  const repo = new MemoryRepo();
+  const server = express().use(createCalendarRouter(repo)).listen(0);
+  t.after(() => server.close());
+  await new Promise((resolve) => server.once("listening", resolve));
+  const base = `http://127.0.0.1:${(server.address() as import("node:net").AddressInfo).port}`;
+
+  const user = await repo.upsertUserByPhone("+15550000008", { name: "Theo" });
+  const all = [0, 1, 2, 3, 4, 5, 6];
+  // As if Theo had said "@planner I don't do mornings, no friday nights, I prefer evenings".
+  await repo.savePreferences(user.id, {
+    preferredTimes: ["evening"],
+    preferredDays: [],
+    never: [{ days: all, from: 5, to: 12 }, { days: [5], from: 21, to: 24 }],
+  });
+  const token = encodeURIComponent(createConnectToken(user.id));
+  const html = await (await fetch(`${base}/preferences?t=${token}`)).text();
+  assert.match(html, /name="times" value="evening" checked/);
+  assert.match(html, /name="never_times" value="morning" checked/);
+  assert.match(html, /never after 9 PM on Fridays/, "a block the simple controls can't show is listed to keep");
+
+  const keep = /name="keep_never" value="([^"]+)"/.exec(html)![1].replaceAll("&quot;", '"');
+  const body = new URLSearchParams([
+    ["t", decodeURIComponent(token)],
+    ["name", "Theo"],
+    ["days", "6"],
+    ["never_times", "morning"],
+    ["never_days", "0"],
+    ["not_after", "22"],
+    ["keep_never", keep],
+  ]);
+  const res = await fetch(`${base}/preferences`, { method: "POST", redirect: "manual", body });
+  assert.equal(res.status, 303);
+  assert.match(res.headers.get("location")!, /saved=1/);
+  assert.deepEqual(await repo.getPreferences(user.id), {
+    preferredTimes: [],
+    preferredDays: [6],
+    never: [
+      { days: all, from: 5, to: 12 },
+      { days: [0], from: 0, to: 24 },
+      { days: all, from: 22, to: 24 },
+      { days: [5], from: 21, to: 24 },
+    ],
+  });
+  assert.match(await (await fetch(`${base}${res.headers.get("location")}`)).text(), /Saved ✓/);
+});

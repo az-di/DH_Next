@@ -1,6 +1,8 @@
 import { readFileSync } from "node:fs";
 import { Router, type Request, type Response } from "express";
+import { createConnectToken } from "../calendar/links.ts";
 import { config } from "../config.ts";
+import { describePreferences } from "../plans/preferences.ts";
 import type { MemoryRepo } from "../db/memory.ts";
 import type { MockChat } from "../messaging/mock.ts";
 import type { Coordinator } from "../plans/coordinator.ts";
@@ -74,6 +76,15 @@ export function createMockRouter(deps: MockDemoDeps): Router {
     };
   };
 
+  // One preferences link per user, so the snapshot (and the page) stays stable between pushes.
+  const prefsLinks = new Map<string, string>();
+  const memberInfo = async ({ phone, name }: MockUser) => {
+    const user = await repo.upsertUserByPhone(phone);
+    if (!prefsLinks.has(user.id)) prefsLinks.set(user.id, `/preferences?t=${encodeURIComponent(createConnectToken(user.id))}`);
+    const prefs = await repo.getPreferences(user.id);
+    return { phone, name, prefsUrl: prefsLinks.get(user.id)!, preferences: prefs ? describePreferences(prefs) : null };
+  };
+
   const snapshot = async () => {
     const plans = [...repo.plans.values()].filter((p) => p.groupId === MOCK_GROUP_ID);
     const plan = plans.find((p) => OPEN_STATUSES.includes(p.status)) ?? plans.at(-1);
@@ -83,7 +94,7 @@ export function createMockRouter(deps: MockDemoDeps): Router {
       botNumber: MOCK_BOT,
       timezone,
       now: clock.now().toISOString(),
-      users: users.map(({ phone, name }) => ({ phone, name })),
+      users: await Promise.all(users.map(memberInfo)),
       messages: chat.messages,
       directs: chat.directs,
       plan: plan ? await planSummary(plan) : null,
@@ -188,10 +199,18 @@ export function createMockRouter(deps: MockDemoDeps): Router {
     res.json(await snapshot());
   });
 
-  router.post("/mock/api/reset", async (_req, res) => {
+  // "Reset chat" keeps people's preferences, like real users between plans;
+  // { everything: true } also clears them and restores the seeded names, so a demo starts clean.
+  router.post("/mock/api/reset", async (req, res) => {
     clearGroup(repo, MOCK_GROUP_ID);
     chat.clear();
     clock.reset();
+    if (req.body?.everything === true) {
+      for (const { phone, name } of users) {
+        const user = await repo.upsertUserByPhone(phone, { name });
+        repo.preferences.delete(user.id);
+      }
+    }
     res.json(await snapshot());
   });
 

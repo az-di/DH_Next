@@ -9,9 +9,19 @@ import { isMentioned, stripMention } from "../messaging/mentions.ts";
 import type { Messenger } from "../messaging/sendblue.ts";
 import { parseVotes, type ParsedVote } from "../messaging/votes.ts";
 import { formatDeadline, formatSlot } from "../time.ts";
-import type { CandidateSlot, MemberRole, Plan, PlanMember, User } from "../types.ts";
+import type {
+  CandidateSlot,
+  MemberRole,
+  ParsedRequest,
+  Plan,
+  PlanMember,
+  PreferenceUpdate,
+  Preferences,
+  User,
+} from "../types.ts";
 import { KeyedLock } from "./lock.ts";
-import { extractRoles, isSelf, parseNameIntro, resolveName, type RoleStatement } from "./roles.ts";
+import { mergePreferences, describeUpdate } from "./preferences.ts";
+import { isSelf, parseNameIntro, resolveName, type RoleStatement } from "./roles.ts";
 import {
   bestPartialOptions,
   COLLECTING_GRACE_MS,
@@ -74,10 +84,33 @@ export class Coordinator {
       const open = await this.repo.getOpenPlanForGroup(groupId);
 
       if (!msg.reaction && isMentioned(msg.text)) {
-        const name = parseNameIntro(stripMention(msg.text));
-        if (name) await this.saveName(groupId, sender, name, open);
-        else if (open) await this.handleOpenMention(open, sender, stripMention(msg.text));
-        else await this.startPlan(msg, sender);
+        const text = stripMention(msg.text);
+        const name = parseNameIntro(text);
+        if (name) {
+          await this.saveName(groupId, sender, name, open);
+          return;
+        }
+        const { request: withoutPhones, optionalPhones } = extractOptional(text);
+        const meaning = await this.brain.interpret(withoutPhones, { now: this.now(), timezone: this.timezone });
+        switch (meaning.kind) {
+          case "preference":
+            await this.savePreferences(groupId, sender, meaning.update);
+            break;
+          case "constraint":
+            if (open) await this.applyConstraint(open, sender, meaning.windows);
+            else await this.say(groupId, { kind: "nothing_scheduled" });
+            break;
+          case "request":
+            if (open) await this.handleOpenMention(open, sender, text, meaning.roles);
+            else await this.startPlan(msg, sender, meaning.request, meaning.roles, optionalPhones);
+            break;
+          case "roles":
+          case "other":
+            // A bare name can answer "Which Sam do you mean?", so "other" goes to the open plan too.
+            if (open) await this.handleOpenMention(open, sender, text, meaning.kind === "roles" ? meaning.roles : []);
+            else await this.say(groupId, { kind: "parse_failed" });
+            break;
+        }
         return;
       }
       if (!open) return; // not addressed to us
@@ -86,15 +119,14 @@ export class Coordinator {
     });
   }
 
-  private async startPlan(msg: InboundMessage, organizer: User): Promise<void> {
+  private async startPlan(
+    msg: InboundMessage,
+    organizer: User,
+    request: ParsedRequest,
+    statements: RoleStatement[],
+    optionalPhones: Set<string>,
+  ): Promise<void> {
     const groupId = msg.groupId!;
-    const { request: withoutPhones, optionalPhones } = extractOptional(stripMention(msg.text));
-    const { request: requestText, statements } = extractRoles(withoutPhones);
-    const request = await this.brain.parseRequest(requestText, { now: this.now(), timezone: this.timezone });
-    if (!request) {
-      await this.say(groupId, { kind: "parse_failed" });
-      return;
-    }
 
     const phones = new Set([msg.from, ...msg.participants]);
     if (msg.botNumber) phones.delete(msg.botNumber);
@@ -174,6 +206,8 @@ export class Coordinator {
       for (const name of names) {
         const found = isSelf(name) ? { kind: "match" as const, user: sender } : resolveName(name, people);
         if (found.kind === "match") {
+          // Someone added to the chat after the plan started isn't a member yet.
+          if (isSelf(name)) await this.repo.addMember(plan.id, sender.id, role);
           await this.repo.updateMember(plan.id, found.user.id, { role });
           changes.push({ name: displayName(found.user), role });
           pending = pending.filter((p) => !p.candidates.includes(found.user.id) && !sameName(p.name, name));
@@ -197,8 +231,8 @@ export class Coordinator {
   }
 
   /** An @mention while a plan is open: a role change from the organizer, or a polite "busy". */
-  private async handleOpenMention(plan: Plan, sender: User, text: string): Promise<void> {
-    let { statements } = extractRoles(text);
+  private async handleOpenMention(plan: Plan, sender: User, text: string, parsed: RoleStatement[]): Promise<void> {
+    let statements = parsed;
     // A bare name ("@planner Sam Patel") answers "Which Sam do you mean?"
     if (statements.length === 0 && sender.id === plan.organizerId) {
       const answer = await this.answerAmbiguous(plan, text);
@@ -208,7 +242,9 @@ export class Coordinator {
       await this.say(plan.groupId, { kind: "already_open", activity: plan.request.activity });
       return;
     }
-    if (sender.id !== plan.organizerId) {
+    // Anyone can make themselves optional; everything else is the organizer's call.
+    const selfOptional = statements.every((s) => s.role === "optional" && s.names.every(isSelf));
+    if (sender.id !== plan.organizerId && !selfOptional) {
       const organizer = await this.repo.getUser(plan.organizerId);
       await this.say(plan.groupId, { kind: "organizer_only", organizerName: organizer ? displayName(organizer) : "the organizer" });
       return;
@@ -245,6 +281,36 @@ export class Coordinator {
     if (open.status === "proposed") await this.advance(open, false);
   }
 
+  // ─────────────────────────── preferences ───────────────────────────
+
+  /** "@planner I don't do mornings": merge into what they saved before and confirm in one line. */
+  private async savePreferences(groupId: string, sender: User, update: PreferenceUpdate): Promise<void> {
+    const merged = mergePreferences(await this.repo.getPreferences(sender.id), update);
+    await this.repo.savePreferences(sender.id, merged);
+    await this.say(groupId, { kind: "preferences_saved", name: displayName(sender), summary: describeUpdate(update) });
+  }
+
+  /**
+   * "I can't do this Saturday" while a plan is open: a "no" from the sender on
+   * every current option in those windows. Plan-scoped only, never saved.
+   */
+  private async applyConstraint(plan: Plan, sender: User, windows: { start: string; end: string }[]): Promise<void> {
+    const slots = plan.status === "proposed" ? await this.repo.listSlots(plan.id, plan.round) : [];
+    const hit = slots.filter((s) => windows.some((w) => s.start < w.end && w.start < s.end));
+    if (hit.length) {
+      const member = (await this.repo.listMembers(plan.id)).find((m) => m.userId === sender.id);
+      if (!member) await this.repo.addMember(plan.id, sender.id, "optional");
+      else if (member.timedOut) await this.repo.updateMember(plan.id, sender.id, { timedOut: false });
+      for (const slot of hit) await this.repo.recordVote(plan.id, slot.id, sender.id, "no");
+    }
+    await this.say(plan.groupId, {
+      kind: "constraint_noted",
+      name: displayName(sender),
+      optionNumbers: hit.map((s) => s.optionNumber),
+    });
+    if (hit.length) await this.advance(plan, false);
+  }
+
   // ───────────────────────────── rounds ──────────────────────────────
 
   private async proposeRound(plan: Plan, reason: "confident" | "after_no"): Promise<void> {
@@ -260,6 +326,11 @@ export class Coordinator {
 
     // Each "no" narrows the window: never re-propose a rejected time.
     const previous = await this.repo.listSlots(plan.id);
+    const preferences = new Map<string, Preferences>();
+    for (const m of members) {
+      const prefs = await this.repo.getPreferences(m.userId);
+      if (prefs) preferences.set(m.userId, prefs);
+    }
     const ranked = scoreSlots({
       request: plan.request,
       timezone: plan.timezone,
@@ -267,6 +338,7 @@ export class Coordinator {
       roles,
       exclude: previous.map((s) => ({ start: new Date(s.start), end: new Date(s.end) })),
       notBefore: now,
+      preferences,
     });
 
     if (ranked.length === 0) {

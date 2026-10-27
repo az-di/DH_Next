@@ -361,3 +361,91 @@ test("introducing yourself outside a plan just saves the name", async () => {
   assert.equal(messenger.outbox.at(-1)!.content, "Nice to meet you, Bob!");
   assert.equal(repo.plans.size, 0);
 });
+
+test("any member can make themselves optional, but not required and not someone else", async () => {
+  const { repo, messenger, send } = setup();
+  await repo.upsertUserByPhone(BOB, { name: "Bob" });
+  await repo.upsertUserByPhone(CARA, { name: "Cara" });
+  await send(ALICE, "@planner dinner next weekend, Bob is optional");
+
+  await send(CARA, "@planner I'm optional");
+  assert.equal(await roleOf(repo, CARA), "optional");
+  assert.equal(messenger.outbox.at(-1)!.content, "Got it: Cara is optional.");
+
+  await send(BOB, "@planner I'm required");
+  assert.equal(await roleOf(repo, BOB), "optional", "can't override the organizer");
+  assert.match(messenger.outbox.at(-1)!.content, /^Only …0001/);
+
+  await send(CARA, "@planner I'm optional and Bob is required");
+  assert.equal(await roleOf(repo, BOB), "optional", "a mixed statement is the organizer's call");
+});
+
+test("preferences in chat are saved, confirmed in one line, and don't start a plan", async () => {
+  const { repo, messenger, send } = setup();
+  await repo.upsertUserByPhone(BOB, { name: "Bob" });
+  await send(BOB, "@planner I don't do mornings");
+  assert.equal(messenger.outbox.at(-1)!.content, "Saved for Bob: never mornings.");
+  assert.equal(repo.plans.size, 0);
+
+  await send(BOB, "@planner I prefer evenings");
+  const bob = await repo.upsertUserByPhone(BOB);
+  assert.deepEqual(await repo.getPreferences(bob.id), {
+    preferredTimes: ["evening"],
+    preferredDays: [],
+    never: [{ days: [0, 1, 2, 3, 4, 5, 6], from: 5, to: 12 }],
+  });
+});
+
+test("a never-time in chat is a hard filter on the next proposal, even mid-plan", async () => {
+  const { repo, send } = setup();
+  await send(BOB, "@planner nothing after 7pm");
+  await send(ALICE, "@planner dinner next weekend");
+  const starts = repo.slots.map((s) => localHour(new Date(s.start), "America/Los_Angeles"));
+  assert.ok(starts.length > 0);
+  assert.ok(starts.every((h) => h === 17), `dinner (2h) has to end by 7 PM: ${starts}`);
+});
+
+test("a one-off constraint with no plan open doesn't start one", async () => {
+  const { repo, messenger, send } = setup();
+  await send(BOB, "@planner I can't do this Saturday");
+  assert.equal(repo.plans.size, 0);
+  assert.equal(messenger.outbox.length, 1);
+  assert.match(messenger.outbox[0].content, /^There's nothing scheduled right now\./);
+  assert.equal(repo.preferences.size, 0, "never saved as a preference");
+});
+
+test("a one-off constraint during a plan is a 'no' on the matching options, then the round is re-checked", async () => {
+  const { repo, messenger, send, plan } = setup();
+  await repo.upsertUserByPhone(CARA, { name: "Cara" });
+  await send(ALICE, "@planner dinner next weekend"); // Sat Nov 7 – Sun Nov 8, 3 options
+  const options = repo.slots.filter((s) => s.round === 1);
+  const day = (iso: string) => localParts(new Date(iso), "America/Los_Angeles").weekday;
+  const sunday = options.filter((s) => day(s.start) === 0).map((s) => s.optionNumber);
+  assert.ok(sunday.length > 0 && sunday.length < options.length, "options on both days");
+
+  await send(CARA, "@planner I can't do next sunday");
+  const cara = await repo.upsertUserByPhone(CARA);
+  const votes = repo.responses.filter((r) => r.userId === cara.id);
+  assert.deepEqual(
+    votes.map((v) => [repo.slots.find((s) => s.id === v.slotId)!.optionNumber, v.vote]),
+    sunday.map((n) => [n, "no"]),
+  );
+  assert.match(messenger.outbox.at(-1)!.content, /^Got it, Cara: marked you as a no for option/);
+  assert.equal(repo.preferences.size, 0, "plan-scoped only");
+
+  // Re-checked: once everyone else agrees on a Saturday option, it locks without waiting on Cara.
+  const saturday = options.find((s) => day(s.start) === 6)!;
+  await send(ALICE, String(saturday.optionNumber));
+  await send(BOB, String(saturday.optionNumber));
+  assert.equal((await plan()).status, "proposed", "Cara hasn't said yes to it");
+  await send(CARA, "@planner I can't do next saturday");
+  assert.equal((await plan()).round, 2, "every option now has an essential no, so the round moves on");
+});
+
+test("a constraint that matches no current option says so and changes nothing", async () => {
+  const { repo, messenger, send } = setup();
+  await send(ALICE, "@planner dinner next weekend");
+  await send(BOB, "@planner I'm busy tomorrow");
+  assert.equal(repo.responses.length, 0);
+  assert.match(messenger.outbox.at(-1)!.content, /None of the current options are then\./);
+});

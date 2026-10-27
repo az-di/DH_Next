@@ -1,4 +1,5 @@
-import type { BusyBlock, MemberRole, ParsedRequest } from "../types.ts";
+import { isBlocked, preferenceFit } from "../plans/preferences.ts";
+import type { BusyBlock, MemberRole, ParsedRequest, Preferences } from "../types.ts";
 import type { Availability } from "./availability.ts";
 
 // Deterministic slot finding: no LLM. Walk the requested window in fixed
@@ -23,10 +24,18 @@ export interface FindSlotsInput {
   exclude?: { start: Date; end: Date }[];
   /** Don't propose anything starting before this (defaults to now). */
   notBefore?: Date;
+  /** Manual preferences by member. "Never" times count as busy; preferred times nudge the score. */
+  preferences?: Map<string, Preferences>;
   stepMinutes?: number;
 }
 
 const EARLIEST_REASONABLE_HOUR = 8;
+/**
+ * Most a slot can gain or lose from preferred times/days (everyone's fit,
+ * role-weighted, averaged over all members). Enough to break ties between
+ * equally free slots; never enough to beat one more person being free.
+ */
+export const PREFERENCE_WEIGHT = 0.1;
 const LATEST_REASONABLE_END_HOUR = 23;
 /** Local hours for an activity with no usual time ("hangout"). */
 export const DEFAULT_ACTIVITY_HOURS = { from: 9, to: 22 };
@@ -109,24 +118,54 @@ export function scoreSlots(input: FindSlotsInput): ScoredSlot[] {
     if (input.exclude?.some((x) => overlaps(x, slot))) continue;
 
     const busyUserIds = connected.filter(([, blocks]) => isBusy(blocks, slot)).map(([id]) => id);
+    // A time someone said never works is a conflict too, calendar or not.
+    const neverUserIds = [...(input.preferences ?? [])]
+      .filter(([id, prefs]) => !busyUserIds.includes(id) && isBlocked(prefs, slot.start, request.durationMinutes, timezone))
+      .map(([id]) => id);
     // An essential member with a known conflict rules the slot out entirely.
-    if (busyUserIds.some((id) => (roles.get(id) ?? "essential") === "essential")) continue;
+    if ([...busyUserIds, ...neverUserIds].some((id) => (roles.get(id) ?? "essential") === "essential")) continue;
 
     const weight = (id: string) => ((roles.get(id) ?? "essential") === "essential" ? 1 : 0.5);
     const totalWeight = connected.reduce((sum, [id]) => sum + weight(id), 0);
     const freeWeight = connected
-      .filter(([id]) => !busyUserIds.includes(id))
+      .filter(([id]) => !busyUserIds.includes(id) && !neverUserIds.includes(id))
       .reduce((sum, [id]) => sum + weight(id), 0);
     const overlapScore = totalWeight === 0 ? 1 : freeWeight / totalWeight;
 
     results.push({
       ...slot,
-      score: overlapScore * 0.7 + hourScore(startHour, endHour, request) * 0.3,
+      score:
+        overlapScore * 0.7 +
+        hourScore(startHour, endHour, request) * 0.3 +
+        PREFERENCE_WEIGHT * groupFit(input.preferences, roles, slot.start, timezone),
       freeCount: connected.length - busyUserIds.length,
       busyUserIds,
     });
   }
   return results.sort((a, b) => b.score - a.score || a.start.getTime() - b.start.getTime());
+}
+
+/**
+ * Members' preferred times and days, -1..1: each member's fit weighted by
+ * role and averaged over everyone, so one person's taste counts for one
+ * person. 0 when nobody has preferences.
+ */
+function groupFit(
+  preferences: Map<string, Preferences> | undefined,
+  roles: Map<string, MemberRole>,
+  start: Date,
+  timezone: string,
+): number {
+  if (!preferences?.size || roles.size === 0) return 0;
+  const weight = (id: string) => ((roles.get(id) ?? "essential") === "essential" ? 1 : 0.5);
+  let total = 0;
+  let sum = 0;
+  for (const id of roles.keys()) {
+    total += weight(id);
+    const prefs = preferences.get(id);
+    sum += weight(id) * ((prefs && preferenceFit(prefs, start, timezone)) ?? 0);
+  }
+  return sum / total;
 }
 
 /** 1.0 inside the preferred hours, decaying by distance outside them; 0.6 when no preference. */
