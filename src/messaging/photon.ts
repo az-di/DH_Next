@@ -93,18 +93,38 @@ export class PhotonMessenger implements Messenger {
   }
 
   async sendGroup(groupId: string, content: string): Promise<SentMessage> {
+    console.log(`[photon] out group ${shortId(groupId)}: ${preview(content)}`);
     const space = this.spaces.get(groupId) ?? (await imessage(this.app).space.get(groupId));
     const sent = await space.send(content);
     return { messageHandle: sent?.id ?? null, groupId };
   }
 
   async sendDirect(number: string, content: string): Promise<SentMessage> {
+    console.log(`[photon] out dm ${last4(number)}: ${preview(content)}`);
     const im = imessage(this.app);
     const user = await im.user(number);
     const space = await im.space.create(user);
     const sent = await space.send(content);
     return { messageHandle: sent?.id ?? null, groupId: null };
   }
+}
+
+// One log line per message in and out, so a silent bot can be told apart from
+// a message that never arrived. Senders are shown by last 4 digits only.
+
+const last4 = (handle: string) => (handle ? `…${handle.replace(/\D/g, "").slice(-4) || handle.slice(-6)}` : "?");
+const shortId = (id: string) => (id.length > 12 ? `…${id.slice(-8)}` : id);
+const preview = (text: string) => JSON.stringify(text.length > 60 ? `${text.slice(0, 60)}…` : text);
+
+function logInbound(msg: InboundMessage, contentType: string | undefined) {
+  const where = msg.groupId ? `group ${shortId(msg.groupId)}` : "dm";
+  const direction = msg.isOutbound ? "echo of our own message" : `from ${last4(msg.from)}`;
+  const what = msg.reaction
+    ? `reaction ${msg.reaction.kind} on ${shortId(msg.reaction.targetHandle ?? "?")}`
+    : msg.text
+      ? `${preview(msg.text)}${isMentioned(msg.text) ? " (mentions bot)" : ""}`
+      : `(${contentType ?? "no text"})`;
+  console.log(`[photon] in ${where} ${direction}: ${what}`);
 }
 
 type InboundHandler = (msg: InboundMessage) => Promise<void>;
@@ -154,10 +174,15 @@ export async function createPhotonTransport(): Promise<PhotonTransport> {
     return inbound;
   };
 
-  const dispatch = async (onMessage: InboundHandler, space: unknown, message: unknown) => {
+  const dispatch = async (onMessage: InboundHandler, space: any, message: any) => {
     try {
       const inbound = await convert(space, message);
-      if (inbound) await onMessage(inbound);
+      if (!inbound) {
+        console.log(`[photon] in (skipped: platform ${message?.platform}) ${message?.content?.type}`);
+        return;
+      }
+      logInbound(inbound, message?.content?.type);
+      await onMessage(inbound);
     } catch (err) {
       console.error("[photon] failed to handle message:", err);
     }
