@@ -106,9 +106,9 @@ voting style in this order (you plus one friend):
 
 | Who | Action | Expected |
 |---|---|---|
-| You | Tapback 👎 on the Option 2 bubble | Nothing posted. It's waiting for your friend. |
+| You | Tapback thumbs down on the Option 2 bubble | Nothing posted. It's waiting for your friend. |
 | Friend | Reply `1 maybe, 2 yes` | Still nothing. You skipped option 1, which counts as no answer (not a no), and you said no to option 2. |
-| You | Reply `2` | Your option 2 vote changes to yes. Option 2 now has a yes or maybe from everyone, so the bot posts **🎉 Locked in: lunch, …** with option 2's time. |
+| You | Reply `2` | Your option 2 vote changes to yes. Option 2 now has a yes or maybe from everyone, so the bot posts **Locked in: lunch, …** (after a party emoji) with option 2's time. |
 
 An option with a yes or maybe from every essential member locks right away.
 If every option has a no from an essential member, the bot moves to the next
