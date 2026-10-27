@@ -3,7 +3,7 @@ import type { InboundMessage } from "./inbound.ts";
 
 /**
  * A single vote extracted from a message. `optionNumber` is null when the
- * reply doesn't name an option ("yes", 👍 on the only proposal); the
+ * reply doesn't name an option ("yes", a thumbs-up on the only proposal); the
  * coordinator resolves it against the current round. `allOptions` marks
  * blanket answers like "none work".
  */
