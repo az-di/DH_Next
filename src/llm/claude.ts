@@ -10,7 +10,7 @@ import { interpretWithRules } from "./interpret.ts";
 import { ACTIVITY_DEFAULTS } from "./rules.ts";
 import { renderTemplate } from "./templates.ts";
 
-const MODEL = "claude-opus-5-5";
+const MODEL = "claude-sonnet-5-5";
 
 // Server-side refusal fallback: if the model declines for policy reasons the
 // API retries on its default fallback model inside the same call.
