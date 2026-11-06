@@ -1,3 +1,4 @@
+import { config } from "../config.ts";
 import type { BotMessage } from "./brain.ts";
 
 // Deterministic copy for every bot message. Used directly when Claude isn't
@@ -6,6 +7,7 @@ import type { BotMessage } from "./brain.ts";
 const list = (names: string[], joiner = "and") =>
   names.length <= 1 ? names.join("") : `${names.slice(0, -1).join(", ")} ${joiner} ${names.at(-1)}`;
 const orList = (names: string[]) => list(names, "or");
+const mention = () => `@${config.botName}`;
 
 export function renderTemplate(m: BotMessage): string {
   switch (m.kind) {
@@ -19,23 +21,34 @@ export function renderTemplate(m: BotMessage): string {
     }
     case "connect_calendar":
       return `Hi${m.name ? ` ${m.name}` : ""}! Your group is planning ${m.activity}. Connect your calendar so I can skip times you're busy (I only see free/busy, never event details): ${m.url}`;
+    case "dm_failed":
+      return `I couldn't DM ${list(m.names)} a calendar link, so I'll plan without ${m.names.length === 1 ? "that calendar" : "those calendars"}. Everyone can still vote here.`;
     case "proposal": {
       // Later rounds say the last one didn't work, however many options there are.
       const retry = m.reason === "after_no";
+      const reactions = m.reactions ?? true;
+      const how =
+        m.options.length === 1
+          ? reactions
+            ? "👍 yes, 👎 no, ❓ maybe."
+            : "Reply yes, no, or maybe."
+          : reactions
+            ? `React with 👍/👎/❓ on each, or reply with the numbers that work${retry ? "" : ` (e.g. "1 3")`}.`
+            : `Reply with the numbers that work${retry ? "" : ` (e.g. "1 3")`}.`;
       const intro =
         m.options.length === 1
           ? retry
-            ? `That didn't work for everyone, so how about this for ${m.activity} instead? 👍 yes, 👎 no, ❓ maybe.`
-            : `How about this for ${m.activity}? 👍 yes, 👎 no, ❓ maybe.`
+            ? `That didn't work for everyone, so how about this for ${m.activity} instead? ${how}`
+            : `How about this for ${m.activity}? ${how}`
           : retry
-            ? `That didn't work for everyone, so here are ${m.options.length} more for ${m.activity}. Tap 👍/👎/❓ on each, or reply with the numbers that work.`
-            : `A few options for ${m.activity}. Tap 👍/👎/❓ on each, or reply with the numbers that work (e.g. "1 3").`;
+            ? `That didn't work for everyone, so here are ${m.options.length} more for ${m.activity}. ${how}`
+            : `A few options for ${m.activity}. ${how}`;
       return `${intro} Please answer by ${m.deadlineLabel}.`;
     }
     case "reminder":
       return `Hey${m.name ? ` ${m.name}` : ""}, quick reminder to vote on ${m.activity} times in the group chat. Closes ${m.deadlineLabel}.`;
     case "nudge":
-      return `Hey${m.name ? ` ${m.name}` : ""}, Option ${m.optionNumber} (${m.slotLabel}) is looking likely for ${m.activity}. Can you make it? Tap 👍/👎/❓ on it in the group chat by ${m.deadlineLabel}.`;
+      return `Hey${m.name ? ` ${m.name}` : ""}, Option ${m.optionNumber} (${m.slotLabel}) is looking likely for ${m.activity}. Can you make it? ${(m.reactions ?? true) ? "React with 👍/👎/❓ on it" : `Reply with "${m.optionNumber}" if so`} in the group chat by ${m.deadlineLabel}.`;
     case "locked": {
       let text = `🎉 Locked in: ${m.activity}, ${m.slotLabel}.`;
       if (m.maybeNames.length) text += ` ${list(m.maybeNames)} said maybe.`;
@@ -55,9 +68,9 @@ export function renderTemplate(m: BotMessage): string {
     case "failed":
       return `I couldn't find a time for ${m.activity}. Mention me again with a different window and I'll try again.`;
     case "parse_failed":
-      return `I didn't quite get that. Try something like "@planner dinner sometime next weekend".`;
+      return `I didn't quite get that. Try something like "${mention()} dinner sometime next weekend".`;
     case "dm_help":
-      return `Hi! I plan things for group chats. Add me to your group and say something like "@planner dinner sometime next weekend".`;
+      return `Hi! I plan things for group chats. Add me to your group and say something like "${mention()} dinner sometime next weekend".`;
     case "already_open":
       return `I'm still working on ${m.activity}. Let's finish that one first!`;
     case "roles_set": {
@@ -72,11 +85,11 @@ export function renderTemplate(m: BotMessage): string {
       const parts: string[] = [];
       if (m.unknown.length) {
         parts.push(
-          `I don't know who ${orList(m.unknown)} is yet. If that's you, reply "@planner I'm ${m.unknown.length === 1 ? m.unknown[0] : "<your name>"}".`,
+          `I don't know who ${orList(m.unknown)} is yet. If that's you, reply "${mention()} I'm ${m.unknown.length === 1 ? m.unknown[0] : "<your name>"}".`,
         );
       }
       for (const a of m.ambiguous) {
-        parts.push(`Which ${a.name} do you mean: ${orList(a.options)}? Reply "@planner" and their full name.`);
+        parts.push(`Which ${a.name} do you mean: ${orList(a.options)}? Reply "${mention()}" and their full name.`);
       }
       return parts.join(" ");
     }
@@ -91,7 +104,7 @@ export function renderTemplate(m: BotMessage): string {
         ? `Got it, ${m.name}: marked you as a no for ${m.optionNumbers.length === 1 ? "option" : "options"} ${list(m.optionNumbers.map(String))}.`
         : `Noted, ${m.name}. None of the current options are then.`;
     case "nothing_scheduled":
-      return `There's nothing scheduled right now. Start a plan with "@planner dinner next weekend".`;
+      return `There's nothing scheduled right now. Start a plan with "${mention()} dinner next weekend".`;
     case "organizer_only":
       return `Only ${m.organizerName}, who started this plan, can change who's required.`;
   }

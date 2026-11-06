@@ -160,6 +160,7 @@ async function connect(): Promise<Provider> {
   return {
     name: "discord",
     network: "discord",
+    capabilities: { reactions: true },
     messenger: new DiscordMessenger(client),
     async start(onMessage) {
       console.log(`[discord] connected as ${client.user!.tag}`);
@@ -186,6 +187,7 @@ async function connect(): Promise<Provider> {
               (m) => !m.user.bot && message.channel.permissionsFor(m)?.has("ViewChannel"),
             );
             inbound.participants = [...visible.keys()].map((id) => USER_PREFIX + id);
+            inbound.names = Object.fromEntries(visible.map((m) => [USER_PREFIX + m.id, m.displayName]));
           }
           return inbound;
         });

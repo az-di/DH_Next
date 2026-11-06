@@ -16,12 +16,16 @@ export interface SlotView {
 export type BotMessage =
   | { kind: "ack"; activity: string; windowLabel: string; unconnectedNames: string[]; optionalNames?: string[] }
   | { kind: "connect_calendar"; name: string | null; url: string; activity: string }
+  /** The calendar link couldn't be delivered privately. Personal links are never posted to the group. */
+  | { kind: "dm_failed"; names: string[] }
   | {
       kind: "proposal";
       activity: string;
       round: number;
       options: SlotView[];
       deadlineLabel: string;
+      /** False on networks where emoji reactions don't reach the bot. */
+      reactions?: boolean;
       /** Why there are several options, e.g. "a few calendars aren't connected". */
       reason: "confident" | "uncertain" | "after_no";
     }
@@ -33,6 +37,7 @@ export type BotMessage =
       optionNumber: number;
       slotLabel: string;
       deadlineLabel: string;
+      reactions?: boolean;
     }
   | { kind: "locked"; activity: string; slotLabel: string; maybeNames: string[]; missingNames: string[] }
   | { kind: "timed_out"; name: string | null; activity: string; slotLabel: string | null }

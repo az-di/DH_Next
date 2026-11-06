@@ -24,8 +24,14 @@ if (!mock) {
 }
 
 const repo = mock?.repo ?? createRepo();
-const messenger = mock?.messenger ?? new RoutingMessenger(providers);
-const coordinator = new Coordinator({ repo, messenger, brain: createBrain(), ...mock?.coordinatorDeps });
+const router = new RoutingMessenger(providers);
+const coordinator = new Coordinator({
+  repo,
+  messenger: mock?.messenger ?? router,
+  supportsReactions: mock ? undefined : (groupId) => router.supportsReactions(groupId),
+  brain: createBrain(),
+  ...mock?.coordinatorDeps,
+});
 const onMessage = withDedupe((msg) => coordinator.handleInbound(msg));
 const app = createServer({ repo, coordinator, inbound: { providers, onMessage }, mock: mock?.server });
 

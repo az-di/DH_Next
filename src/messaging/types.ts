@@ -21,6 +21,8 @@ export interface InboundMessage {
   botAddress: string | null;
   groupId: string | null;
   participants: string[];
+  /** Display names by address, when the network provides them. Used until someone introduces themselves. */
+  names?: Record<string, string>;
   text: string;
   replyToHandle: string | null;
   reaction: InboundReaction | null;
@@ -40,10 +42,17 @@ export interface Messenger {
   sendDirect(address: string, content: string): Promise<SentMessage>;
 }
 
+/** What a network can do, where the bot has to behave differently because of it. */
+export interface Capabilities {
+  /** Whether emoji reactions reach the bot as votes. Without them, the bot only asks for replies. */
+  reactions: boolean;
+}
+
 /** A connected chat network, ready to send and receive. */
 export interface Provider {
   name: string;
   network: string;
+  capabilities: Capabilities;
   messenger: Messenger;
   /** Mounts webhook routes. Runs before the global JSON parser, so each route picks its own body parser. */
   routes?(app: Express, onMessage: InboundHandler): void;

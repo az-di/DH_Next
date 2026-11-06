@@ -42,6 +42,8 @@ export interface CoordinatorDeps {
   calendarsEnabled?: boolean;
   /** Free/busy lookup. Defaults to connected calendars; the /mock demo swaps in seeded data. */
   loadAvailability?: typeof loadAvailability;
+  /** Whether emoji votes work in this group chat. Defaults to yes. */
+  supportsReactions?: (groupId: string) => boolean;
 }
 
 /**
@@ -57,6 +59,7 @@ export class Coordinator {
   private timezone: string;
   private calendarsEnabled: boolean;
   private loadAvailability: typeof loadAvailability;
+  private supportsReactions: (groupId: string) => boolean;
   private lock = new KeyedLock();
 
   constructor(deps: CoordinatorDeps) {
@@ -67,6 +70,7 @@ export class Coordinator {
     this.timezone = deps.timezone ?? config.defaultTimezone;
     this.calendarsEnabled = deps.calendarsEnabled ?? hasGoogle();
     this.loadAvailability = deps.loadAvailability ?? loadAvailability;
+    this.supportsReactions = deps.supportsReactions ?? (() => true);
   }
 
   // ───────────────────────────── inbound ─────────────────────────────
@@ -147,7 +151,10 @@ export class Coordinator {
 
     const unconnected: User[] = [];
     for (const address of addresses) {
-      const user = await this.repo.upsertUserByAddress(address);
+      let user = await this.repo.upsertUserByAddress(address);
+      // A name from the network fills a gap, but never replaces one the person told us.
+      const networkName = msg.names?.[address];
+      if (!user.name && networkName) user = await this.repo.upsertUserByAddress(address, { name: networkName });
       const role: MemberRole = optionalPhones.has(localPart(address)) ? "optional" : "essential";
       await this.repo.addMember(plan.id, user.id, role);
       if (this.calendarsEnabled && !(await this.repo.getCalendarConnection(user.id))) unconnected.push(user);
@@ -172,14 +179,17 @@ export class Coordinator {
       return;
     }
     // Give people a few minutes to connect calendars; the scheduler proposes after.
+    const unreachable: string[] = [];
     for (const user of unconnected) {
-      await this.sayDirect(user.address, {
+      const sent = await this.sayDirect(user.address, {
         kind: "connect_calendar",
         name: user.name,
         url: connectUrl(user.id),
         activity: request.activity,
       });
+      if (!sent) unreachable.push(displayName(user));
     }
+    if (unreachable.length) await this.say(groupId, { kind: "dm_failed", names: unreachable });
     await this.repo.updatePlan(plan.id, {
       deadline: new Date(this.now().getTime() + COLLECTING_GRACE_MS).toISOString(),
     });
@@ -379,6 +389,7 @@ export class Coordinator {
       round: plan.round,
       options: slots.map((s) => ({ optionNumber: s.optionNumber, label: this.slotLabel(s, plan) })),
       deadlineLabel: formatDeadline(deadline, plan.timezone),
+      reactions: this.supportsReactions(plan.groupId),
       reason: reason === "after_no" ? "after_no" : count > 1 ? "uncertain" : "confident",
     });
     // One bubble per option so each can be tapbacked on its own.
@@ -603,6 +614,7 @@ export class Coordinator {
         optionNumber: leading.optionNumber,
         slotLabel: this.slotLabel(leading, plan),
         deadlineLabel: formatDeadline(deadline, plan.timezone),
+        reactions: this.supportsReactions(plan.groupId),
       });
       await this.repo.updateMember(plan.id, m.userId, {
         remindersSent: m.remindersSent + 1,
@@ -650,8 +662,10 @@ export class Coordinator {
   }
 }
 
+/** The person's name, or the end of their phone number on networks that use one. */
 function displayName(user: User): string {
-  return user.name ?? `…${user.address.slice(-4)}`;
+  if (user.name) return user.name;
+  return /^\+?\d{4,}$/.test(localPart(user.address)) ? `…${user.address.slice(-4)}` : "someone";
 }
 
 const sameName = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();

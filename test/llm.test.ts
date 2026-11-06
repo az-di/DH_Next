@@ -110,7 +110,7 @@ test("later rounds acknowledge the last one didn't work, even with one option", 
     proposal(1, "after_no"),
     "That didn't work for everyone, so how about this for dinner instead? 👍 yes, 👎 no, ❓ maybe. Please answer by Thu 6:00 PM.",
   );
-  assert.match(proposal(2, "after_no"), /^That didn't work for everyone, so here are 2 more for dinner\. Tap 👍\/👎\/❓/);
+  assert.match(proposal(2, "after_no"), /^That didn't work for everyone, so here are 2 more for dinner\. React with 👍\/👎\/❓/);
   assert.match(proposal(1, "confident"), /^How about this for dinner\?/);
   assert.match(proposal(3, "uncertain"), /^A few options for dinner\./);
 });

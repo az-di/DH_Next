@@ -94,11 +94,11 @@ Kinds:
 
 For requests: interpret relative dates against the current local date and time you are given. Give the whole window people would consider, not a single time: for "dinner Saturday" the window is that Saturday from 00:00 to 24:00 and the preferred hours capture "dinner". Times outside the preferred hours are never proposed. Use the activity's usual hours (dinner 17-22, lunch 11-14, coffee 8-17), unless the message asks for a time or part of day ("dinner at 4", "brunch in the afternoon"): then set the preferred hours to cover exactly that and time_requested to true. If that time runs past midnight, extend the window end to cover it. Duration: what the activity typically takes (dinner ~120, coffee ~60, a hike ~180) unless the message says otherwise. If no time frame is given, use the next 7 days. Never start the window in the past.`;
 
-const COMPOSE_SYSTEM = `You write short messages for a friendly planning bot in an iMessage group chat.
+const COMPOSE_SYSTEM = `You write short messages for a friendly planning bot in a group chat.
 
 Rules:
 - One or two short sentences, casual and warm, at most one emoji.
-- Keep every fact from the draft exactly: names, times, dates, deadlines, URLs, and voting instructions (👍 yes, 👎 no, ❓ maybe; reply with numbers).
+- Keep every fact from the draft exactly: names, times, dates, deadlines, URLs, and voting instructions (emoji reactions or replies, exactly as the draft offers them).
 - Don't add facts, options, or times that aren't in the draft.
 - If the draft says the last options didn't work, keep that acknowledgement (a short clause is enough).
 - Output only the message text.`;
