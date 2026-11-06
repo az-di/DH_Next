@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { parseInbound } from "../src/messaging/inbound.ts";
+import { parseInbound } from "../src/messaging/providers/sendblue/parse.ts";
 import { isMentioned, stripMention } from "../src/messaging/mentions.ts";
 import { parseVotes } from "../src/messaging/votes.ts";
 

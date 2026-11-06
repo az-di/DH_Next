@@ -1,9 +1,9 @@
 import { Spectrum } from "spectrum-ts";
 import { imessage } from "spectrum-ts/providers/imessage";
-import { config } from "../config.ts";
-import type { InboundMessage } from "./inbound.ts";
-import { isMentioned } from "./mentions.ts";
-import type { Messenger, SentMessage } from "./sendblue.ts";
+import express from "express";
+import { config, env } from "../../../config.ts";
+import { isMentioned } from "../../mentions.ts";
+import type { InboundHandler, InboundMessage, Messenger, Provider, ProviderDefinition, SentMessage } from "../../types.ts";
 
 // Photon Spectrum (spectrum-ts, Stable docs: https://photon.codes/docs/spectrum-ts).
 // Spectrum owns the transport: cloud iMessage lines over gRPC, with inbound
@@ -15,6 +15,15 @@ import type { Messenger, SentMessage } from "./sendblue.ts";
 //   dashboard; others fail with "Target not allowed for this project".
 // - No group creation and no group-change events. Messages in an existing
 //   group may still arrive; dedicated-line (Business) plans support groups fully.
+
+const photonConfig = {
+  // Names match what spectrum-ts reads from the environment.
+  projectId: env("SPECTRUM_PROJECT_ID"),
+  projectSecret: env("SPECTRUM_PROJECT_SECRET"),
+  webhookSecret: env("SPECTRUM_WEBHOOK_SECRET"),
+  /** "stream" (long-lived connection, no public URL) or "webhook". */
+  inbound: env("PHOTON_INBOUND", "stream") as "stream" | "webhook",
+};
 
 type SpectrumApp = Awaited<ReturnType<typeof Spectrum>>;
 
@@ -127,28 +136,14 @@ function logInbound(msg: InboundMessage, contentType: string | undefined) {
   console.log(`[photon] in ${where} ${direction}: ${what}`);
 }
 
-type InboundHandler = (msg: InboundMessage) => Promise<void>;
-
-export interface PhotonTransport {
-  messenger: PhotonMessenger;
-  /** Consumes the inbound stream until stop(). Used when PHOTON_INBOUND=stream. */
-  listen(onMessage: InboundHandler): Promise<void>;
-  /** Express-style raw handler for PHOTON_INBOUND=webhook. */
-  handleWebhook(
-    req: { body: Uint8Array; headers: Record<string, string> },
-    onMessage: InboundHandler,
-  ): Promise<{ status: number; headers: Record<string, string>; body: Uint8Array }>;
-  stop(): Promise<void>;
-}
-
-export async function createPhotonTransport(): Promise<PhotonTransport> {
+async function connect(): Promise<Provider> {
   let app: SpectrumApp;
   try {
     app = await Spectrum({
-      projectId: config.photon.projectId,
-      projectSecret: config.photon.projectSecret,
+      projectId: photonConfig.projectId,
+      projectSecret: photonConfig.projectSecret,
       providers: [imessage.config()],
-      webhookSecret: config.photon.webhookSecret || undefined,
+      webhookSecret: photonConfig.webhookSecret || undefined,
     });
   } catch (err) {
     throw new Error(
@@ -189,15 +184,36 @@ export async function createPhotonTransport(): Promise<PhotonTransport> {
   };
 
   return {
+    name: "photon",
+    network: "imessage",
     messenger,
-    async listen(onMessage) {
+    routes(server, onMessage) {
+      if (photonConfig.inbound !== "webhook") return;
+      // Photon signs the exact request bytes, so this route needs the raw body.
+      server.post("/webhooks/photon", express.raw({ type: "*/*" }), async (req, res) => {
+        const result = await app.webhook(
+          { body: req.body, headers: req.headers as Record<string, string> },
+          (space, message) => dispatch(onMessage, space, message),
+        );
+        res.status(result.status).set(result.headers).send(Buffer.from(result.body));
+      });
+      console.log(`[photon] webhook: ${config.publicBaseUrl}/webhooks/photon`);
+    },
+    // Stream mode: no public URL needed, the SDK holds a connection open.
+    async start(onMessage) {
+      if (photonConfig.inbound !== "stream") return;
+      console.log("[photon] listening for iMessages on the Spectrum stream");
       for await (const [space, message] of app.messages) {
         void dispatch(onMessage, space, message); // don't block the stream on one slow plan
       }
     },
-    async handleWebhook(req, onMessage) {
-      return app.webhook(req, (space, message) => dispatch(onMessage, space, message));
-    },
     stop: () => app.stop(),
   };
 }
+
+export const photonProvider: ProviderDefinition = {
+  name: "photon",
+  network: "imessage",
+  isConfigured: () => Boolean(photonConfig.projectId && photonConfig.projectSecret),
+  create: connect,
+};

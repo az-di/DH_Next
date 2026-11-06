@@ -3,8 +3,8 @@ import assert from "node:assert/strict";
 import { localHour } from "../src/calendar/slots.ts";
 import { MemoryRepo } from "../src/db/memory.ts";
 import { TemplateBrain } from "../src/llm/index.ts";
-import { parseInbound } from "../src/messaging/inbound.ts";
-import { ConsoleMessenger } from "../src/messaging/sendblue.ts";
+import { parseInbound } from "../src/messaging/providers/sendblue/parse.ts";
+import { ConsoleMessenger } from "../src/messaging/providers/console/index.ts";
 import { Coordinator, extractOptional } from "../src/plans/coordinator.ts";
 import { formatSlot, localParts, startOfLocalDay, zonedTimeToUtc } from "../src/time.ts";
 

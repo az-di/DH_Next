@@ -1,6 +1,6 @@
 import { config } from "../config.ts";
 import { MemoryRepo } from "../db/memory.ts";
-import { MockChat, MockMessenger } from "../messaging/mock.ts";
+import { MockChat, MockMessenger } from "./chat.ts";
 import type { CoordinatorDeps } from "../plans/coordinator.ts";
 import { MockClock } from "./clock.ts";
 import { createFakeAvailability, MOCK_BOT, MOCK_USERS, type MockUser } from "./fixtures.ts";

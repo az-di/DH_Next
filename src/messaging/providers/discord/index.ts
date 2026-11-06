@@ -1,8 +1,7 @@
 import { Client, Events, GatewayIntentBits, Partials } from "discord.js";
-import { config } from "../config.ts";
-import type { InboundMessage } from "./inbound.ts";
-import { isMentioned } from "./mentions.ts";
-import type { Messenger, SentMessage } from "./sendblue.ts";
+import { config, env } from "../../../config.ts";
+import { isMentioned } from "../../mentions.ts";
+import type { InboundHandler, InboundMessage, Messenger, Provider, ProviderDefinition, SentMessage } from "../../types.ts";
 
 // Discord adapter (discord.js gateway bot). A text channel (or thread) plays the
 // role of an iMessage group chat; a Discord user id plays the role of a phone
@@ -17,8 +16,7 @@ import type { Messenger, SentMessage } from "./sendblue.ts";
 export const CHANNEL_PREFIX = "discord:channel:";
 export const USER_PREFIX = "discord:user:";
 const MAX_LEN = 2000;
-
-export const isDiscordId = (id: string) => id.startsWith(CHANNEL_PREFIX) || id.startsWith(USER_PREFIX);
+const botToken = env("DISCORD_BOT_TOKEN");
 
 export interface DiscordMessageLike {
   id: string;
@@ -126,15 +124,7 @@ export class DiscordMessenger implements Messenger {
   }
 }
 
-type InboundHandler = (msg: InboundMessage) => Promise<void>;
-
-export interface DiscordTransport {
-  messenger: DiscordMessenger;
-  listen(onMessage: InboundHandler): void;
-  stop(): Promise<void>;
-}
-
-export async function createDiscordTransport(): Promise<DiscordTransport> {
+async function connect(): Promise<Provider> {
   const client = new Client({
     intents: [
       GatewayIntentBits.Guilds,
@@ -149,7 +139,7 @@ export async function createDiscordTransport(): Promise<DiscordTransport> {
   });
 
   try {
-    await client.login(config.discord.botToken);
+    await client.login(botToken);
   } catch (err) {
     throw new Error(
       `Could not log in to Discord. Check DISCORD_BOT_TOKEN and the privileged intents (Message Content, Server Members) in the Developer Portal. Cause: ${(err as Error).message}`,
@@ -168,8 +158,10 @@ export async function createDiscordTransport(): Promise<DiscordTransport> {
   };
 
   return {
+    name: "discord",
+    network: "discord",
     messenger: new DiscordMessenger(client),
-    listen(onMessage) {
+    async start(onMessage) {
       console.log(`[discord] connected as ${client.user!.tag}`);
 
       client.on(Events.MessageCreate, (message) => {
@@ -221,3 +213,10 @@ export async function createDiscordTransport(): Promise<DiscordTransport> {
     stop: () => client.destroy(),
   };
 }
+
+export const discordProvider: ProviderDefinition = {
+  name: "discord",
+  network: "discord",
+  isConfigured: () => Boolean(botToken),
+  create: connect,
+};

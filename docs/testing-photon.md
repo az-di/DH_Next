@@ -39,7 +39,7 @@ new conversations from**.
 Create `.env` in the repo root:
 
 ```
-MESSAGING_PROVIDER=photon
+MESSAGING_PROVIDERS=photon
 SPECTRUM_PROJECT_ID=your-project-id
 SPECTRUM_PROJECT_SECRET=your-project-secret
 PHOTON_INBOUND=stream

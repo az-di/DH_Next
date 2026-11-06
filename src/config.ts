@@ -1,7 +1,7 @@
 // Central place for environment configuration. Every integration degrades to a
 // local fallback when its keys are missing, so the app boots with no .env at all.
 
-function env(name: string, fallback = ""): string {
+export function env(name: string, fallback = ""): string {
   return process.env[name]?.trim() || fallback;
 }
 
@@ -12,28 +12,11 @@ export const config = {
   defaultTimezone: env("DEFAULT_TIMEZONE", "America/Los_Angeles"),
   schedulerIntervalMs: Number(env("SCHEDULER_INTERVAL_MS", "60000")),
 
-  /** "photon" | "sendblue" | "console" | "mock". Defaults to whichever has credentials. */
-  messagingProvider: env("MESSAGING_PROVIDER"),
-
-  // Photon Spectrum. Names match what spectrum-ts reads from the environment.
-  photon: {
-    projectId: env("SPECTRUM_PROJECT_ID"),
-    projectSecret: env("SPECTRUM_PROJECT_SECRET"),
-    webhookSecret: env("SPECTRUM_WEBHOOK_SECRET"),
-    /** "stream" (long-lived connection, no public URL) or "webhook". */
-    inbound: env("PHOTON_INBOUND", "stream") as "stream" | "webhook",
-  },
-
-  sendblue: {
-    apiKey: env("SENDBLUE_API_KEY"),
-    apiSecret: env("SENDBLUE_API_SECRET"),
-    fromNumber: env("SENDBLUE_FROM_NUMBER"),
-    webhookSecret: env("SENDBLUE_WEBHOOK_SECRET"),
-  },
-
-  discord: {
-    botToken: env("DISCORD_BOT_TOKEN"),
-  },
+  /** Provider names to run (see messaging/registry.ts). Empty = every provider with credentials. */
+  messagingProviders: (env("MESSAGING_PROVIDERS") || env("MESSAGING_PROVIDER"))
+    .split(",")
+    .map((name) => name.trim().toLowerCase())
+    .filter(Boolean),
 
   supabase: {
     url: env("SUPABASE_URL"),
@@ -53,9 +36,6 @@ export const config = {
   },
 };
 
-export const hasPhoton = () => Boolean(config.photon.projectId && config.photon.projectSecret);
-export const hasSendblue = () => Boolean(config.sendblue.apiKey && config.sendblue.apiSecret);
-export const hasDiscord = () => Boolean(config.discord.botToken);
 export const hasSupabase = () => Boolean(config.supabase.url && config.supabase.serviceRoleKey);
 export const hasGoogle = () => Boolean(config.google.clientId && config.google.clientSecret);
 export const hasAnthropic = () => Boolean(config.anthropic.apiKey);

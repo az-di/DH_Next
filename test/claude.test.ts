@@ -3,8 +3,8 @@ import assert from "node:assert/strict";
 import type Anthropic from "@anthropic-ai/sdk";
 import { MemoryRepo } from "../src/db/memory.ts";
 import { ClaudeBrain } from "../src/llm/claude.ts";
-import { parseInbound } from "../src/messaging/inbound.ts";
-import { ConsoleMessenger } from "../src/messaging/sendblue.ts";
+import { parseInbound } from "../src/messaging/providers/sendblue/parse.ts";
+import { ConsoleMessenger } from "../src/messaging/providers/console/index.ts";
 import { Coordinator } from "../src/plans/coordinator.ts";
 
 const TZ = "America/Los_Angeles";

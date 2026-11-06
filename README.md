@@ -43,7 +43,7 @@ and the organizer answers "Which Sam?" with the full name (`@planner Sam Patel`)
 
 | Layer | Choice |
 |---|---|
-| Messaging | Photon Spectrum (`spectrum-ts`, cloud iMessage) by default; Sendblue as an alternative |
+| Messaging | Pluggable providers: Photon Spectrum (`spectrum-ts`, cloud iMessage) by default, Sendblue as an alternative, Discord alongside either |
 | Backend | Node 24 + TypeScript (run directly via Node type stripping), Express |
 | Database | Supabase Postgres (`supabase/migrations`), in-memory fallback for dev/tests |
 | Calendar | Google OAuth, `calendar.freebusy` scope only |
@@ -55,13 +55,14 @@ and the organizer answers "Which Sam?" with the full name (`@planner Sam Patel`)
 
 ```
 src/
-  index.ts               entry: wires repo, messenger, brain, coordinator, scheduler
-  server.ts              Express: /webhooks/sendblue, /health, calendar routes
+  index.ts               entry: wires repo, providers, brain, coordinator, scheduler
+  server.ts              Express: provider webhooks, /health, calendar routes
   config.ts              env config; every integration is optional
   types.ts               domain types (mirror the SQL schema)
   time.ts                Intl-based timezone helpers
   db/                    Repo interface, Supabase + in-memory implementations
-  messaging/             Photon + Sendblue adapters, inbound parsing, @mentions, vote parsing
+  messaging/             provider contract, registry, router, @mentions, vote parsing
+    providers/           one folder per provider: photon, sendblue, discord, console
   calendar/              signed connect links, Google OAuth + free/busy, slot scoring
   llm/                   Brain interface, Claude implementation, rules + templates
   plans/                 pure round rules, coordinator, per-group lock
@@ -101,17 +102,16 @@ An iMessage-style group chat in the browser, for when you don't want (or can't
 get) real iMessage. It runs the real bot end to end, and only the phone is fake.
 
 ```bash
-npm run mock          # same as npm run dev with MESSAGING_PROVIDER=mock
+npm run mock          # same as npm run dev with MESSAGING_PROVIDERS=mock
 open http://localhost:3000/mock
 ```
 
 - **Group**: "Weekend Crew" with Maya, Jordan, Priya, Sam, and Theo
   (`+15550000001`–`5`). Pick who you're typing as from the avatar left of the
   text field. The bot is `+15550000000`.
-- **Real inbound path**: each message is POSTed to this server's own
-  `/webhooks/sendblue`, the same as the curl example above, so parsing,
-  dedupe, @mentions, and vote handling all run for real. Tapbacks are sent
-  as Sendblue-style structured reactions.
+- **Real coordinator**: each message goes straight to the coordinator, so
+  @mentions, vote handling, and round logic all run for real. Provider-specific
+  parsing and webhooks aren't involved.
 - **Tapbacks and replies**: double-click, right-click, or long-press a bubble
   for thumbs up / thumbs down / question mark. Drag a bubble to the right (or choose **Reply**) to reply
   to it. A reply of "no" to an option bubble counts as a vote on that option.

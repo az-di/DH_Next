@@ -1,82 +1,45 @@
-import { config, hasDiscord, hasPhoton, hasSendblue } from "./config.ts";
+import { config } from "./config.ts";
 import { createRepo } from "./db/index.ts";
 import { createBrain } from "./llm/index.ts";
-import { createDeduper } from "./messaging/dedupe.ts";
-import { createPhotonTransport, type PhotonTransport } from "./messaging/photon.ts";
-import { createDiscordTransport, isDiscordId, type DiscordTransport } from "./messaging/discord.ts";
-import { ConsoleMessenger, RoutingMessenger, SendblueMessenger, type Messenger } from "./messaging/sendblue.ts";
-import { createMockDemo, type MockDemo } from "./mock/index.ts";
+import { withDedupe } from "./messaging/dedupe.ts";
+import { createProviders } from "./messaging/registry.ts";
+import { RoutingMessenger } from "./messaging/router.ts";
+import type { Provider } from "./messaging/types.ts";
+import { createMockDemo } from "./mock/index.ts";
 import { Coordinator } from "./plans/coordinator.ts";
 import { createServer } from "./server.ts";
 
-// Pick the messaging provider: explicit MESSAGING_PROVIDER wins, otherwise the
-// first one with credentials (Photon, then Sendblue), otherwise log-only.
-const provider =
-  config.messagingProvider || (hasPhoton() ? "photon" : hasSendblue() ? "sendblue" : "console");
+// Local group chat at /mock with fake users, seeded calendars, and a fast-forward
+// clock. It replaces real providers, so a demo never talks to real servers.
+const mock = config.messagingProviders.includes("mock") ? await createMockDemo() : undefined;
 
-let photon: PhotonTransport | undefined;
-let mock: MockDemo | undefined;
-let messenger: Messenger;
-if (provider === "photon") {
+let providers: Provider[] = [];
+if (!mock) {
   try {
-    photon = await createPhotonTransport();
+    providers = await createProviders(config.messagingProviders);
   } catch (err) {
-    console.error(`[photon] ${(err as Error).message}`);
+    console.error((err as Error).message);
     process.exit(1);
   }
-  messenger = photon.messenger;
-} else if (provider === "sendblue") {
-  messenger = new SendblueMessenger();
-} else if (provider === "mock") {
-  // Local group chat at /mock with fake users, seeded calendars, and a fast-forward clock.
-  mock = await createMockDemo();
-  messenger = mock.messenger;
-} else {
-  console.warn("[messaging] no provider credentials — messages will be logged, not sent");
-  messenger = new ConsoleMessenger();
-}
-
-// Discord runs alongside whichever iMessage provider is active. In mock mode it's
-// skipped so the demo never talks to real servers.
-let discord: DiscordTransport | undefined;
-if (!mock && hasDiscord()) {
-  try {
-    discord = await createDiscordTransport();
-  } catch (err) {
-    console.error(`[discord] ${(err as Error).message}`);
-    process.exit(1);
-  }
-  messenger = new RoutingMessenger(discord.messenger, messenger, isDiscordId);
 }
 
 const repo = mock?.repo ?? createRepo();
+const messenger = mock?.messenger ?? new RoutingMessenger(providers);
 const coordinator = new Coordinator({ repo, messenger, brain: createBrain(), ...mock?.coordinatorDeps });
-const app = createServer({ repo, coordinator, photon, mock: mock?.server });
+const onMessage = withDedupe((msg) => coordinator.handleInbound(msg));
+const app = createServer({ repo, coordinator, inbound: { providers, onMessage }, mock: mock?.server });
 
 app.listen(config.port, () => {
-  console.log(`[server] listening on :${config.port} (messaging: ${provider})`);
-  if (provider === "sendblue") console.log(`[server] Sendblue webhook: ${config.publicBaseUrl}/webhooks/sendblue`);
+  const names = mock ? "mock" : providers.map((p) => p.name).join(", ");
+  console.log(`[server] listening on :${config.port} (messaging: ${names})`);
   if (mock) console.log(`[server] mock group chat: http://localhost:${config.port}/mock`);
-  if (photon && config.photon.inbound === "webhook") {
-    console.log(`[server] Photon webhook: ${config.publicBaseUrl}/webhooks/photon`);
-  }
 });
 
-// Photon stream mode: no public URL needed, the SDK holds a connection open.
-if (photon && config.photon.inbound === "stream") {
-  const firstTime = createDeduper();
-  console.log("[photon] listening for iMessages on the Spectrum stream");
-  photon
-    .listen((msg) => (firstTime(msg.messageHandle) ? coordinator.handleInbound(msg) : Promise.resolve()))
-    .catch((err) => {
-      console.error("[photon] inbound stream stopped:", err);
-      process.exit(1);
-    });
-}
-
-if (discord) {
-  const firstTime = createDeduper();
-  discord.listen((msg) => (firstTime(msg.messageHandle) ? coordinator.handleInbound(msg) : Promise.resolve()));
+for (const provider of providers) {
+  provider.start?.(onMessage).catch((err) => {
+    console.error(`[${provider.name}] inbound stopped:`, err);
+    process.exit(1);
+  });
 }
 
 // Scheduler: reminders, deadlines, and round transitions. A single in-process
@@ -94,8 +57,7 @@ setInterval(async () => {
 
 for (const signal of ["SIGINT", "SIGTERM"] as const) {
   process.once(signal, async () => {
-    await photon?.stop().catch(() => {});
-    await discord?.stop().catch(() => {});
+    await Promise.allSettled(providers.map((p) => p.stop?.()));
     process.exit(0);
   });
 }

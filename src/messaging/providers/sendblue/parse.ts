@@ -1,28 +1,9 @@
+import type { InboundMessage, InboundReaction } from "../../types.ts";
+import { sendblueConfig } from "./config.ts";
+
 // Normalizes a Sendblue receive-webhook body into the shape the coordinator uses.
 // Documented fields: content, message_handle, from_number, group_id,
 // participants, is_outbound, reply_to.message_handle, thread_originator.
-
-export interface InboundReaction {
-  /** like | dislike | question | love | laugh | emphasize, or a raw emoji */
-  kind: string;
-  /** Handle of the message that was reacted to, when the payload carries it. */
-  targetHandle: string | null;
-  /** Quoted text from "Liked “…”" style fallbacks, used to find the target. */
-  quotedText: string | null;
-}
-
-export interface InboundMessage {
-  messageHandle: string;
-  from: string;
-  /** The Sendblue line that received this message (the bot itself). */
-  botNumber: string | null;
-  groupId: string | null;
-  participants: string[];
-  text: string;
-  replyToHandle: string | null;
-  reaction: InboundReaction | null;
-  isOutbound: boolean;
-}
 
 // iMessage relays tapbacks to non-reaction-aware clients as text like
 // `Liked “Option 1: Sat 7pm”`. Map those verbs to reaction kinds.
@@ -45,7 +26,7 @@ export function parseInbound(body: Record<string, any>): InboundMessage {
   return {
     messageHandle: String(body.message_handle ?? ""),
     from: String(body.from_number ?? body.number ?? ""),
-    botNumber: body.sendblue_number ?? body.to_number ?? null,
+    botNumber: body.sendblue_number ?? body.to_number ?? (sendblueConfig.fromNumber || null),
     groupId: body.group_id ? String(body.group_id) : null,
     participants: Array.isArray(body.participants) ? body.participants.map(String) : [],
     text,

@@ -1,24 +1,24 @@
 import { readFileSync } from "node:fs";
-import { Router, type Request, type Response } from "express";
+import { Router, type Response } from "express";
 import { createConnectToken } from "../calendar/links.ts";
 import { config } from "../config.ts";
 import { describePreferences } from "../plans/preferences.ts";
 import type { MemoryRepo } from "../db/memory.ts";
-import type { MockChat } from "../messaging/mock.ts";
+import type { InboundMessage } from "../messaging/types.ts";
 import type { Coordinator } from "../plans/coordinator.ts";
 import { formatSlot } from "../time.ts";
 import { OPEN_STATUSES, type Plan } from "../types.ts";
+import type { MockChat } from "./chat.ts";
 import type { MockClock } from "./clock.ts";
 import { MOCK_BOT, MOCK_GROUP_ID, MOCK_GROUP_NAME, type MockUser } from "./fixtures.ts";
 
-// The /mock group chat (MESSAGING_PROVIDER=mock). Messages typed on the page
-// are posted to this server's own /webhooks/sendblue, exactly like the README's
-// curl example, so parsing, dedupe, and the coordinator all run for real.
+// The /mock group chat (MESSAGING_PROVIDERS=mock). Messages typed on the page
+// go straight to the real coordinator as normalized inbound messages.
 
 const HOUR = 3_600_000;
 /** Fast-forward moves in steps and ticks after each, so reminders fire before the deadline does. */
 const STEP_MS = 15 * 60_000;
-const TAPBACKS: Record<string, string> = { "👍": "like", "👎": "dislike", "❓": "question" };
+const TAPBACKS = new Set(["👍", "👎", "❓"]);
 
 export interface MockDemoDeps {
   repo: MemoryRepo;
@@ -35,20 +35,17 @@ export function createMockRouter(deps: MockDemoDeps): Router {
   const router = Router();
   const isMember = (phone: unknown) => users.some((u) => u.phone === phone);
 
-  const deliver = async (req: Request, body: Record<string, unknown>) => {
-    const url = new URL("/webhooks/sendblue", `http://127.0.0.1:${req.socket.localPort}`);
-    if (config.sendblue.webhookSecret) url.searchParams.set("secret", config.sendblue.webhookSecret);
-    const res = await fetch(url, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        to_number: MOCK_BOT,
-        group_id: MOCK_GROUP_ID,
+  // Handled in the background, as with a real provider, so the page stays responsive.
+  const deliver = (message: Pick<InboundMessage, "messageHandle" | "from" | "text" | "replyToHandle" | "reaction">) => {
+    coordinator
+      .handleInbound({
+        ...message,
+        botNumber: MOCK_BOT,
+        groupId: MOCK_GROUP_ID,
         participants: [...users.map((u) => u.phone), MOCK_BOT],
-        ...body,
-      }),
-    });
-    if (!res.ok) throw new Error(`webhook returned ${res.status}`);
+        isOutbound: false,
+      })
+      .catch((err) => console.error("[mock] failed to handle message:", err));
   };
 
   const planSummary = async (plan: Plan) => {
@@ -149,28 +146,22 @@ export function createMockRouter(deps: MockDemoDeps): Router {
     }
     const target = chat.messages.some((m) => m.handle === replyTo) ? (replyTo as string) : null;
     const message = chat.post(from, content, target);
-    await deliver(req, {
-      content,
-      from_number: from,
-      message_handle: message.handle,
-      ...(target && { reply_to: { message_handle: target } }),
-    });
+    deliver({ messageHandle: message.handle, from, text: content, replyToHandle: target, reaction: null });
     res.json({ ok: true, handle: message.handle });
   });
 
   router.post("/mock/api/react", async (req, res) => {
     const { from, target, emoji } = req.body ?? {};
-    const kind = TAPBACKS[emoji];
-    if (!isMember(from) || !kind || !chat.react(String(target), from, emoji)) {
+    if (!isMember(from) || !TAPBACKS.has(emoji) || !chat.react(String(target), from, emoji)) {
       res.status(400).json({ error: "need a mock user, a message, and one of 👍 👎 ❓" });
       return;
     }
-    await deliver(req, {
-      content: "",
-      from_number: from,
-      message_handle: chat.nextHandle("tapback"),
-      reaction: kind,
-      associated_message_handle: target,
+    deliver({
+      messageHandle: chat.nextHandle("tapback"),
+      from,
+      text: "",
+      replyToHandle: null,
+      reaction: { kind: emoji, targetHandle: String(target), quotedText: null },
     });
     res.json({ ok: true });
   });

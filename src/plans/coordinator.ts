@@ -4,9 +4,8 @@ import { pickDistinct, scoreSlots } from "../calendar/slots.ts";
 import { config, hasGoogle } from "../config.ts";
 import type { Repo } from "../db/repo.ts";
 import { formatOption, type Brain, type BotMessage } from "../llm/index.ts";
-import type { InboundMessage } from "../messaging/inbound.ts";
+import type { InboundMessage, Messenger } from "../messaging/types.ts";
 import { isMentioned, stripMention } from "../messaging/mentions.ts";
-import type { Messenger } from "../messaging/sendblue.ts";
 import { parseVotes, type ParsedVote } from "../messaging/votes.ts";
 import { formatDeadline, formatSlot } from "../time.ts";
 import type {
@@ -130,7 +129,6 @@ export class Coordinator {
 
     const phones = new Set([msg.from, ...msg.participants]);
     if (msg.botNumber) phones.delete(msg.botNumber);
-    if (config.sendblue.fromNumber) phones.delete(config.sendblue.fromNumber);
 
     const plan = await this.repo.createPlan({
       groupId,

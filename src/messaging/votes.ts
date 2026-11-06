@@ -1,5 +1,5 @@
 import type { Vote } from "../types.ts";
-import type { InboundMessage } from "./inbound.ts";
+import type { InboundMessage } from "./types.ts";
 
 /**
  * A single vote extracted from a message. `optionNumber` is null when the

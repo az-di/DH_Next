@@ -1,4 +1,4 @@
-import type { Messenger, SentMessage } from "./sendblue.ts";
+import type { Messenger, SentMessage } from "../messaging/types.ts";
 
 // Mock iMessage for local development and demos (MESSAGING_PROVIDER=mock).
 // Nothing leaves the process: bot messages land in an in-memory group thread

@@ -1,9 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { toInbound, type SpaceInfo } from "../src/messaging/photon.ts";
+import { toInbound, type SpaceInfo } from "../src/messaging/providers/photon/index.ts";
 import { MemoryRepo } from "../src/db/memory.ts";
 import { TemplateBrain } from "../src/llm/index.ts";
-import { ConsoleMessenger } from "../src/messaging/sendblue.ts";
+import { ConsoleMessenger } from "../src/messaging/providers/console/index.ts";
 import { parseVotes } from "../src/messaging/votes.ts";
 import { Coordinator } from "../src/plans/coordinator.ts";
 

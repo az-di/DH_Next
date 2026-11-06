@@ -1,8 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { chunk, isDiscordId, needsMembers, normalizeMention, reactionToInbound, toInbound } from "../src/messaging/discord.ts";
+import { chunk, needsMembers, normalizeMention, reactionToInbound, toInbound } from "../src/messaging/providers/discord/index.ts";
 import { isMentioned } from "../src/messaging/mentions.ts";
-import { RoutingMessenger, ConsoleMessenger } from "../src/messaging/sendblue.ts";
 import { parseVotes } from "../src/messaging/votes.ts";
 
 const BOT = "999";
@@ -48,14 +47,4 @@ test("emoji reactions become votes on the reacted-to message", () => {
 test("long replies are split under the 2000 char cap", () => {
   const parts = chunk(("x".repeat(90) + "\n").repeat(50));
   assert.ok(parts.length > 1 && parts.every((p) => p.length <= 2000));
-});
-
-test("RoutingMessenger sends Discord ids to Discord and the rest elsewhere", async () => {
-  const discord = new ConsoleMessenger();
-  const other = new ConsoleMessenger();
-  const router = new RoutingMessenger(discord, other, isDiscordId);
-  await router.sendGroup("discord:channel:1", "a");
-  await router.sendDirect("+15550000001", "b");
-  assert.equal(discord.outbox.length, 1);
-  assert.equal(other.outbox.length, 1);
 });
