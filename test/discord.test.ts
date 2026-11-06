@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { chunk, isDiscordId, normalizeMention, reactionToInbound, toInbound } from "../src/messaging/discord.ts";
+import { chunk, isDiscordId, needsMembers, normalizeMention, reactionToInbound, toInbound } from "../src/messaging/discord.ts";
 import { isMentioned } from "../src/messaging/mentions.ts";
 import { RoutingMessenger, ConsoleMessenger } from "../src/messaging/sendblue.ts";
 import { parseVotes } from "../src/messaging/votes.ts";
@@ -22,6 +22,15 @@ test("a guild message maps to a namespaced group message", () => {
   assert.equal(msg.groupId, "discord:channel:c1");
   assert.equal(msg.from, "discord:user:u1");
   assert.equal(msg.text, "@planner dinner");
+});
+
+test("the member list is fetched for a mention anywhere in a group message", () => {
+  const inbound = (content: string, inGuild = true) =>
+    toInbound({ id: "m", channelId: "c1", content, author: { id: "u1" }, inGuild }, BOT);
+  assert.equal(needsMembers(inbound("<@999> dinner")), true);
+  assert.equal(needsMembers(inbound("hey <@999> dinner next weekend")), true);
+  assert.equal(needsMembers(inbound("dinner next weekend")), false);
+  assert.equal(needsMembers(inbound("<@999> dinner", false)), false);
 });
 
 test("a DM has no group id", () => {

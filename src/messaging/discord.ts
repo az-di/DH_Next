@@ -1,6 +1,7 @@
 import { Client, Events, GatewayIntentBits, Partials } from "discord.js";
 import { config } from "../config.ts";
 import type { InboundMessage } from "./inbound.ts";
+import { isMentioned } from "./mentions.ts";
 import type { Messenger, SentMessage } from "./sendblue.ts";
 
 // Discord adapter (discord.js gateway bot). A text channel (or thread) plays the
@@ -50,6 +51,11 @@ export function toInbound(
     reaction: null,
     isOutbound: message.author.id === botUserId,
   };
+}
+
+/** A group message that addresses the bot may start a plan, so it needs the channel's member list. */
+export function needsMembers(msg: Pick<InboundMessage, "groupId" | "text">): boolean {
+  return msg.groupId !== null && isMentioned(msg.text);
 }
 
 export function reactionToInbound(
@@ -182,7 +188,7 @@ export async function createDiscordTransport(): Promise<DiscordTransport> {
             botId,
           );
           // Membership is only needed when a plan starts, so skip the fetch otherwise.
-          if (inGuild && /^@\S/.test(inbound.text) && inbound.text.includes(`@${config.botName}`)) {
+          if (message.inGuild() && needsMembers(inbound)) {
             const members = await message.guild.members.fetch();
             const visible = members.filter(
               (m) => !m.user.bot && message.channel.permissionsFor(m)?.has("ViewChannel"),
