@@ -1,9 +1,10 @@
-import { config, hasPhoton, hasSendblue } from "./config.ts";
+import { config, hasDiscord, hasPhoton, hasSendblue } from "./config.ts";
 import { createRepo } from "./db/index.ts";
 import { createBrain } from "./llm/index.ts";
 import { createDeduper } from "./messaging/dedupe.ts";
 import { createPhotonTransport, type PhotonTransport } from "./messaging/photon.ts";
-import { ConsoleMessenger, SendblueMessenger, type Messenger } from "./messaging/sendblue.ts";
+import { createDiscordTransport, isDiscordId, type DiscordTransport } from "./messaging/discord.ts";
+import { ConsoleMessenger, RoutingMessenger, SendblueMessenger, type Messenger } from "./messaging/sendblue.ts";
 import { createMockDemo, type MockDemo } from "./mock/index.ts";
 import { Coordinator } from "./plans/coordinator.ts";
 import { createServer } from "./server.ts";
@@ -35,6 +36,19 @@ if (provider === "photon") {
   messenger = new ConsoleMessenger();
 }
 
+// Discord runs alongside whichever iMessage provider is active. In mock mode it's
+// skipped so the demo never talks to real servers.
+let discord: DiscordTransport | undefined;
+if (!mock && hasDiscord()) {
+  try {
+    discord = await createDiscordTransport();
+  } catch (err) {
+    console.error(`[discord] ${(err as Error).message}`);
+    process.exit(1);
+  }
+  messenger = new RoutingMessenger(discord.messenger, messenger, isDiscordId);
+}
+
 const repo = mock?.repo ?? createRepo();
 const coordinator = new Coordinator({ repo, messenger, brain: createBrain(), ...mock?.coordinatorDeps });
 const app = createServer({ repo, coordinator, photon, mock: mock?.server });
@@ -60,6 +74,11 @@ if (photon && config.photon.inbound === "stream") {
     });
 }
 
+if (discord) {
+  const firstTime = createDeduper();
+  discord.listen((msg) => (firstTime(msg.messageHandle) ? coordinator.handleInbound(msg) : Promise.resolve()));
+}
+
 // Scheduler: reminders, deadlines, and round transitions. A single in-process
 // interval is enough for the MVP; move to a queue/cron when running >1 instance.
 let ticking = false;
@@ -76,6 +95,7 @@ setInterval(async () => {
 for (const signal of ["SIGINT", "SIGTERM"] as const) {
   process.once(signal, async () => {
     await photon?.stop().catch(() => {});
+    await discord?.stop().catch(() => {});
     process.exit(0);
   });
 }

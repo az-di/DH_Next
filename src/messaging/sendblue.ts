@@ -71,3 +71,28 @@ export class ConsoleMessenger implements Messenger {
     return { messageHandle, groupId: kind === "group" ? to : null };
   }
 }
+
+/** Sends each message through whichever transport owns the id, so iMessage and Discord can run side by side. */
+export class RoutingMessenger implements Messenger {
+  private discord: Messenger;
+  private fallback: Messenger;
+  private owns: (id: string) => boolean;
+
+  constructor(discord: Messenger, fallback: Messenger, owns: (id: string) => boolean) {
+    this.discord = discord;
+    this.fallback = fallback;
+    this.owns = owns;
+  }
+
+  private pick(id: string): Messenger {
+    return this.owns(id) ? this.discord : this.fallback;
+  }
+
+  sendGroup(groupId: string, content: string) {
+    return this.pick(groupId).sendGroup(groupId, content);
+  }
+
+  sendDirect(number: string, content: string) {
+    return this.pick(number).sendDirect(number, content);
+  }
+}

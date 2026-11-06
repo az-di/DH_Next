@@ -31,6 +31,10 @@ export const config = {
     webhookSecret: env("SENDBLUE_WEBHOOK_SECRET"),
   },
 
+  discord: {
+    botToken: env("DISCORD_BOT_TOKEN"),
+  },
+
   supabase: {
     url: env("SUPABASE_URL"),
     serviceRoleKey: env("SUPABASE_SERVICE_ROLE_KEY"),
@@ -51,6 +55,7 @@ export const config = {
 
 export const hasPhoton = () => Boolean(config.photon.projectId && config.photon.projectSecret);
 export const hasSendblue = () => Boolean(config.sendblue.apiKey && config.sendblue.apiSecret);
+export const hasDiscord = () => Boolean(config.discord.botToken);
 export const hasSupabase = () => Boolean(config.supabase.url && config.supabase.serviceRoleKey);
 export const hasGoogle = () => Boolean(config.google.clientId && config.google.clientSecret);
 export const hasAnthropic = () => Boolean(config.anthropic.apiKey);
