@@ -19,7 +19,7 @@ type Row = Record<string, any>;
 
 const toUser = (r: Row): User => ({
   id: r.id,
-  phone: r.phone,
+  address: r.address,
   name: r.name,
   timezone: r.timezone,
   createdAt: r.created_at,
@@ -119,10 +119,10 @@ export class SupabaseRepo implements Repo {
     this.db = createClient(url, serviceRoleKey, { auth: { persistSession: false } });
   }
 
-  async upsertUserByPhone(phone: string, patch: Partial<Pick<User, "name" | "timezone">> = {}) {
-    const row = dropUndefined({ phone, name: patch.name, timezone: patch.timezone });
+  async upsertUserByAddress(address: string, patch: Partial<Pick<User, "name" | "timezone">> = {}) {
+    const row = dropUndefined({ address, name: patch.name, timezone: patch.timezone });
     const data = must(
-      await this.db.from("users").upsert(row, { onConflict: "phone" }).select().single(),
+      await this.db.from("users").upsert(row, { onConflict: "address" }).select().single(),
     );
     return toUser(data);
   }

@@ -12,7 +12,7 @@ export type MemberRole = "essential" | "optional";
 
 export interface User {
   id: string;
-  phone: string; // E.164, the primary key we get from Sendblue
+  address: string; // network-prefixed id, see messaging/address.ts
   name: string | null;
   timezone: string | null;
   createdAt: string;
@@ -43,7 +43,7 @@ export interface ParsedRequest {
 
 export interface Plan {
   id: string;
-  groupId: string; // Sendblue group id
+  groupId: string; // network-prefixed group chat id
   organizerId: string;
   status: PlanStatus;
   round: number; // 1..MAX_ROUNDS

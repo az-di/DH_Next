@@ -4,6 +4,7 @@ import { pickDistinct, scoreSlots } from "../calendar/slots.ts";
 import { config, hasGoogle } from "../config.ts";
 import type { Repo } from "../db/repo.ts";
 import { formatOption, type Brain, type BotMessage } from "../llm/index.ts";
+import { localPart } from "../messaging/address.ts";
 import type { InboundMessage, Messenger } from "../messaging/types.ts";
 import { isMentioned, stripMention } from "../messaging/mentions.ts";
 import { parseVotes, type ParsedVote } from "../messaging/votes.ts";
@@ -79,7 +80,7 @@ export class Coordinator {
     }
     const groupId = msg.groupId;
     await this.lock.run(groupId, async () => {
-      const sender = await this.repo.upsertUserByPhone(msg.from);
+      const sender = await this.repo.upsertUserByAddress(msg.from);
       const open = await this.repo.getOpenPlanForGroup(groupId);
 
       if (!msg.reaction && isMentioned(msg.text)) {
@@ -127,8 +128,8 @@ export class Coordinator {
   ): Promise<void> {
     const groupId = msg.groupId!;
 
-    const phones = new Set([msg.from, ...msg.participants]);
-    if (msg.botNumber) phones.delete(msg.botNumber);
+    const addresses = new Set([msg.from, ...msg.participants]);
+    if (msg.botAddress) addresses.delete(msg.botAddress);
 
     const plan = await this.repo.createPlan({
       groupId,
@@ -145,9 +146,9 @@ export class Coordinator {
     });
 
     const unconnected: User[] = [];
-    for (const phone of phones) {
-      const user = await this.repo.upsertUserByPhone(phone);
-      const role: MemberRole = optionalPhones.has(phone) ? "optional" : "essential";
+    for (const address of addresses) {
+      const user = await this.repo.upsertUserByAddress(address);
+      const role: MemberRole = optionalPhones.has(localPart(address)) ? "optional" : "essential";
       await this.repo.addMember(plan.id, user.id, role);
       if (this.calendarsEnabled && !(await this.repo.getCalendarConnection(user.id))) unconnected.push(user);
     }
@@ -172,7 +173,7 @@ export class Coordinator {
     }
     // Give people a few minutes to connect calendars; the scheduler proposes after.
     for (const user of unconnected) {
-      await this.sayDirect(user.phone, {
+      await this.sayDirect(user.address, {
         kind: "connect_calendar",
         name: user.name,
         url: connectUrl(user.id),
@@ -264,7 +265,7 @@ export class Coordinator {
 
   /** "@planner I'm Sam": remember the name, and apply a role that was waiting on it. */
   private async saveName(groupId: string, sender: User, name: string, open: Plan | null): Promise<void> {
-    const user = await this.repo.upsertUserByPhone(sender.phone, { name });
+    const user = await this.repo.upsertUserByAddress(sender.address, { name });
     const isMember = open !== null && (await this.repo.listMembers(open.id)).some((m) => m.userId === user.id);
     const waiting = isMember
       ? open.pendingRoles.find((p) => p.candidates.length === 0 && resolveName(p.name, [user]).kind === "match")
@@ -572,7 +573,7 @@ export class Coordinator {
       if (reminderDue(m, roundStartedAt, deadline, now) === null) continue;
       const user = await this.repo.getUser(m.userId);
       if (!user) continue;
-      await this.sayDirect(user.phone, {
+      await this.sayDirect(user.address, {
         kind: "reminder",
         name: user.name,
         activity: plan.request.activity,
@@ -595,7 +596,7 @@ export class Coordinator {
       if (reminderDue(m, roundStartedAt, deadline, now) === null) continue;
       const user = await this.repo.getUser(m.userId);
       if (!user) continue;
-      await this.sayDirect(user.phone, {
+      await this.sayDirect(user.address, {
         kind: "nudge",
         name: user.name,
         activity: plan.request.activity,
@@ -617,7 +618,7 @@ export class Coordinator {
     for (const m of members.filter((m) => m.timedOut)) {
       const user = await this.repo.getUser(m.userId);
       if (user) {
-        await this.sayDirect(user.phone, {
+        await this.sayDirect(user.address, {
           kind: "timed_out",
           name: user.name,
           activity: plan.request.activity,
@@ -639,18 +640,18 @@ export class Coordinator {
    * DMs are best-effort: a failed calendar link or reminder (e.g. Photon's
    * shared-pool allowlist rejecting an unregistered number) must not break the plan.
    */
-  private async sayDirect(phone: string, message: BotMessage) {
+  private async sayDirect(address: string, message: BotMessage) {
     try {
-      return await this.messenger.sendDirect(phone, await this.brain.compose(message));
+      return await this.messenger.sendDirect(address, await this.brain.compose(message));
     } catch (err) {
-      console.error(`[coordinator] direct message to ${phone} failed:`, err);
+      console.error(`[coordinator] direct message to ${address} failed:`, err);
       return null;
     }
   }
 }
 
 function displayName(user: User): string {
-  return user.name ?? `…${user.phone.slice(-4)}`;
+  return user.name ?? `…${user.address.slice(-4)}`;
 }
 
 const sameName = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();

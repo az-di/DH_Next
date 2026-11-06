@@ -26,15 +26,15 @@ export class MemoryRepo implements Repo {
   responses: Response[] = [];
   proposalMessages = new Map<string, { planId: string; slotId: string }>();
 
-  async upsertUserByPhone(phone: string, patch: Partial<Pick<User, "name" | "timezone">> = {}) {
-    const existing = [...this.users.values()].find((u) => u.phone === phone);
+  async upsertUserByAddress(address: string, patch: Partial<Pick<User, "name" | "timezone">> = {}) {
+    const existing = [...this.users.values()].find((u) => u.address === address);
     if (existing) {
       Object.assign(existing, stripUndefined(patch));
       return existing;
     }
     const user: User = {
       id: randomUUID(),
-      phone,
+      address,
       name: patch.name ?? null,
       timezone: patch.timezone ?? null,
       createdAt: now(),

@@ -148,7 +148,7 @@ export function createCalendarRouter(repo: Repo): Router {
   /** Saves the name (same field as "@planner I'm Sam") and preferences from a submitted form. */
   const saveProfile = async (user: User, body: Record<string, unknown>) => {
     const name = cleanName(body.name);
-    if (name && name !== user.name) await repo.upsertUserByPhone(user.phone, { name });
+    if (name && name !== user.name) await repo.upsertUserByAddress(user.address, { name });
     await repo.savePreferences(user.id, readPreferences(body));
   };
 

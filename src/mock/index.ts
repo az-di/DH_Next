@@ -23,7 +23,7 @@ export async function createMockDemo(
   const repo = new MemoryRepo();
   const clock = new MockClock();
   const chat = new MockChat(MOCK_BOT, clock.now);
-  for (const user of users) await repo.upsertUserByPhone(user.phone, { name: user.name });
+  for (const user of users) await repo.upsertUserByAddress(user.phone, { name: user.name });
   return {
     messenger: new MockMessenger(chat),
     repo,

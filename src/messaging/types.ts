@@ -15,9 +15,10 @@ export interface InboundReaction {
 /** One incoming chat event, normalized by a provider. */
 export interface InboundMessage {
   messageHandle: string;
+  /** Sender's address (see address.ts). Every address here carries its network prefix. */
   from: string;
-  /** The bot's own id on this network, so it isn't added to plans as a member. */
-  botNumber: string | null;
+  /** The bot's own address on this network, so it isn't added to plans as a member. */
+  botAddress: string | null;
   groupId: string | null;
   participants: string[];
   text: string;
@@ -36,7 +37,7 @@ export interface SentMessage {
 /** Outbound messaging used by the coordinator. */
 export interface Messenger {
   sendGroup(groupId: string, content: string): Promise<SentMessage>;
-  sendDirect(number: string, content: string): Promise<SentMessage>;
+  sendDirect(address: string, content: string): Promise<SentMessage>;
 }
 
 /** A connected chat network, ready to send and receive. */
@@ -56,8 +57,8 @@ export interface ProviderDefinition {
   /** Used in MESSAGING_PROVIDERS. */
   name: string;
   /**
-   * The chat network this provider connects to. Ids on non-iMessage networks
-   * start with `<network>:`, and only one provider per network can run at a time.
+   * The chat network this provider connects to. Every address it produces starts
+   * with `<network>:`, and only one provider per network can run at a time.
    */
   network: string;
   /** Whether its credentials are present, for auto-selection. */

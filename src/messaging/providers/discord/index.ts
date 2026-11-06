@@ -41,7 +41,7 @@ export function toInbound(
   return {
     messageHandle: message.id,
     from: USER_PREFIX + message.author.id,
-    botNumber: null,
+    botAddress: null,
     groupId: message.inGuild ? CHANNEL_PREFIX + message.channelId : null,
     participants,
     text: normalizeMention(message.content, botUserId),
@@ -65,7 +65,7 @@ export function reactionToInbound(
     // Reactions have no id of their own; make one unique per (message, user, emoji) for dedupe.
     messageHandle: `reaction:${reaction.messageId}:${userId}:${reaction.emoji}`,
     from: USER_PREFIX + userId,
-    botNumber: null,
+    botAddress: null,
     groupId: reaction.inGuild ? CHANNEL_PREFIX + reaction.channelId : null,
     participants: [],
     text: "",

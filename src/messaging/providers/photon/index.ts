@@ -2,6 +2,7 @@ import { Spectrum } from "spectrum-ts";
 import { imessage } from "spectrum-ts/providers/imessage";
 import express from "express";
 import { config, env } from "../../../config.ts";
+import { imessageAddress } from "../../address.ts";
 import { isMentioned } from "../../mentions.ts";
 import type { InboundHandler, InboundMessage, Messenger, Provider, ProviderDefinition, SentMessage } from "../../types.ts";
 
@@ -69,10 +70,10 @@ export function toInbound(
 
   return {
     messageHandle: message.id,
-    from: message.sender?.id ?? "",
-    botNumber: space.phone,
-    groupId: space.isGroup ? space.id : null,
-    participants,
+    from: imessageAddress.wrap(message.sender?.id ?? ""),
+    botAddress: space.phone ? imessageAddress.wrap(space.phone) : null,
+    groupId: space.isGroup ? imessageAddress.wrap(space.id) : null,
+    participants: participants.map(imessageAddress.wrap),
     text: textOf(content),
     replyToHandle,
     reaction,
@@ -103,15 +104,16 @@ export class PhotonMessenger implements Messenger {
 
   async sendGroup(groupId: string, content: string): Promise<SentMessage> {
     console.log(`[photon] out group ${shortId(groupId)}: ${preview(content)}`);
-    const space = this.spaces.get(groupId) ?? (await imessage(this.app).space.get(groupId));
+    const id = imessageAddress.unwrap(groupId);
+    const space = this.spaces.get(id) ?? (await imessage(this.app).space.get(id));
     const sent = await space.send(content);
     return { messageHandle: sent?.id ?? null, groupId };
   }
 
-  async sendDirect(number: string, content: string): Promise<SentMessage> {
-    console.log(`[photon] out dm ${last4(number)}: ${preview(content)}`);
+  async sendDirect(address: string, content: string): Promise<SentMessage> {
+    console.log(`[photon] out dm ${last4(address)}: ${preview(content)}`);
     const im = imessage(this.app);
-    const user = await im.user(number);
+    const user = await im.user(imessageAddress.unwrap(address));
     const space = await im.space.create(user);
     const sent = await space.send(content);
     return { messageHandle: sent?.id ?? null, groupId: null };
@@ -164,7 +166,7 @@ async function connect(): Promise<Provider> {
     // Membership is only needed when a plan starts, so skip the lookup otherwise.
     if (info.isGroup && isMentioned(inbound.text)) {
       const members: { id: string }[] = await space.getMembers().catch(() => []);
-      inbound.participants = members.map((m) => m.id);
+      inbound.participants = members.map((m) => imessageAddress.wrap(m.id));
     }
     return inbound;
   };

@@ -40,7 +40,7 @@ export function createMockRouter(deps: MockDemoDeps): Router {
     coordinator
       .handleInbound({
         ...message,
-        botNumber: MOCK_BOT,
+        botAddress: MOCK_BOT,
         groupId: MOCK_GROUP_ID,
         participants: [...users.map((u) => u.phone), MOCK_BOT],
         isOutbound: false,
@@ -62,7 +62,7 @@ export function createMockRouter(deps: MockDemoDeps): Router {
       activity: plan.request.activity,
       deadline: plan.deadline,
       lockedLabel: locked ? label(locked) : null,
-      optionalPhones: members.filter((m) => m.role === "optional").map((m) => repo.users.get(m.userId)?.phone),
+      optionalPhones: members.filter((m) => m.role === "optional").map((m) => repo.users.get(m.userId)?.address),
       options: slots.map((s) => ({
         optionNumber: s.optionNumber,
         label: label(s),
@@ -76,7 +76,7 @@ export function createMockRouter(deps: MockDemoDeps): Router {
   // One preferences link per user, so the snapshot (and the page) stays stable between pushes.
   const prefsLinks = new Map<string, string>();
   const memberInfo = async ({ phone, name }: MockUser) => {
-    const user = await repo.upsertUserByPhone(phone);
+    const user = await repo.upsertUserByAddress(phone);
     if (!prefsLinks.has(user.id)) prefsLinks.set(user.id, `/preferences?t=${encodeURIComponent(createConnectToken(user.id))}`);
     const prefs = await repo.getPreferences(user.id);
     return { phone, name, prefsUrl: prefsLinks.get(user.id)!, preferences: prefs ? describePreferences(prefs) : null };
@@ -198,7 +198,7 @@ export function createMockRouter(deps: MockDemoDeps): Router {
     clock.reset();
     if (req.body?.everything === true) {
       for (const { phone, name } of users) {
-        const user = await repo.upsertUserByPhone(phone, { name });
+        const user = await repo.upsertUserByAddress(phone, { name });
         repo.preferences.delete(user.id);
       }
     }

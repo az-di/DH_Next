@@ -1,5 +1,6 @@
 import express, { type Express } from "express";
 import { config } from "../../../config.ts";
+import { imessageAddress } from "../../address.ts";
 import type { InboundHandler, Messenger, ProviderDefinition, SentMessage } from "../../types.ts";
 import { sendblueConfig } from "./config.ts";
 import { parseInbound } from "./parse.ts";
@@ -12,15 +13,15 @@ const BASE_URL = "https://api.sendblue.com/api";
 export class SendblueMessenger implements Messenger {
   async sendGroup(groupId: string, content: string) {
     return this.post("/send-group-message", {
-      group_id: groupId,
+      group_id: imessageAddress.unwrap(groupId),
       content,
       from_number: sendblueConfig.fromNumber,
     });
   }
 
-  async sendDirect(number: string, content: string) {
+  async sendDirect(address: string, content: string) {
     return this.post("/send-message", {
-      number,
+      number: imessageAddress.unwrap(address),
       content,
       from_number: sendblueConfig.fromNumber,
     });
@@ -40,7 +41,7 @@ export class SendblueMessenger implements Messenger {
     if (!res.ok || data.status === "ERROR") {
       throw new Error(`sendblue ${path} failed (${res.status}): ${data.error_message ?? JSON.stringify(data)}`);
     }
-    return { messageHandle: data.message_handle ?? null, groupId: data.group_id || null };
+    return { messageHandle: data.message_handle ?? null, groupId: data.group_id ? imessageAddress.wrap(data.group_id) : null };
   }
 }
 

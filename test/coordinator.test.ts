@@ -3,16 +3,20 @@ import assert from "node:assert/strict";
 import { localHour } from "../src/calendar/slots.ts";
 import { MemoryRepo } from "../src/db/memory.ts";
 import { TemplateBrain } from "../src/llm/index.ts";
+import { imessageAddress } from "../src/messaging/address.ts";
 import { parseInbound } from "../src/messaging/providers/sendblue/parse.ts";
 import { ConsoleMessenger } from "../src/messaging/providers/console/index.ts";
 import { Coordinator, extractOptional } from "../src/plans/coordinator.ts";
 import { formatSlot, localParts, startOfLocalDay, zonedTimeToUtc } from "../src/time.ts";
 
-const BOT = "+15550000000";
-const ALICE = "+15550000001";
-const BOB = "+15550000002";
-const CARA = "+15550000003";
-const GROUP = "group-1";
+// What a Sendblue webhook carries, and the addresses the coordinator sees for them.
+const BOT_NUMBER = "+15550000000";
+const GROUP_ID = "group-1";
+const ALICE = "imessage:+15550000001";
+const BOB = "imessage:+15550000002";
+const CARA = "imessage:+15550000003";
+const GROUP = imessageAddress.wrap(GROUP_ID);
+const number = imessageAddress.unwrap;
 
 function setup() {
   const repo = new MemoryRepo();
@@ -31,10 +35,10 @@ function setup() {
     coordinator.handleInbound(
       parseInbound({
         content,
-        from_number: from,
-        to_number: BOT,
-        group_id: GROUP,
-        participants: [ALICE, BOB, CARA, BOT],
+        from_number: number(from),
+        to_number: BOT_NUMBER,
+        group_id: GROUP_ID,
+        participants: [number(ALICE), number(BOB), number(CARA), BOT_NUMBER],
         message_handle: `in-${++seq}`,
         ...extra,
       }),
@@ -139,7 +143,7 @@ test("\"tomorrow\" uses the real date when no clock is injected", async () => {
     calendarsEnabled: false,
   });
   await coordinator.handleInbound(
-    parseInbound({ content: "@planner drinks at 11pm tomorrow", from_number: ALICE, group_id: GROUP, participants: [ALICE, BOB], message_handle: "real-1" }),
+    parseInbound({ content: "@planner drinks at 11pm tomorrow", from_number: number(ALICE), group_id: GROUP_ID, participants: [number(ALICE), number(BOB)], message_handle: "real-1" }),
   );
   const tz = "America/Los_Angeles";
   const t = localParts(startOfLocalDay(new Date(), tz, 1), tz);
@@ -205,7 +209,7 @@ test("chatter and second requests are handled politely", async () => {
 test("a DM gets a how-to reply instead of starting a plan", async () => {
   const { repo, coordinator, messenger } = setup();
   await coordinator.handleInbound(
-    parseInbound({ content: "hello?", from_number: ALICE, to_number: BOT, group_id: "", message_handle: "dm-1" }),
+    parseInbound({ content: "hello?", from_number: number(ALICE), to_number: BOT_NUMBER, group_id: "", message_handle: "dm-1" }),
   );
   assert.equal(repo.plans.size, 0);
   assert.equal(messenger.outbox.at(-1)?.to, ALICE);
@@ -283,7 +287,7 @@ test("nudge is for essential members only and respects the 2-reminder cap", asyn
 
   const p = await plan();
   const span = Date.parse(p.deadline!) - Date.parse(p.roundStartedAt!);
-  const bob = await repo.upsertUserByPhone(BOB);
+  const bob = await repo.upsertUserByAddress(BOB);
   await repo.updateMember(p.id, bob.id, { remindersSent: 2 }); // already used up
   advance(span * 0.9);
   await coordinator.tick();
@@ -291,13 +295,13 @@ test("nudge is for essential members only and respects the 2-reminder cap", asyn
 });
 
 const roleOf = async (repo: MemoryRepo, phone: string) => {
-  const user = await repo.upsertUserByPhone(phone);
+  const user = await repo.upsertUserByAddress(phone);
   return repo.members.find((m) => m.userId === user.id)!.role;
 };
 
 test("organizer marks people optional by name when starting a plan", async () => {
   const { repo, messenger, send, plan } = setup();
-  await repo.upsertUserByPhone(CARA, { name: "Cara" });
+  await repo.upsertUserByAddress(CARA, { name: "Cara" });
   await send(ALICE, "@planner dinner next weekend, Cara is optional");
   assert.equal((await plan()).request.activity, "dinner", "the role clause isn't part of the request");
   assert.equal(await roleOf(repo, CARA), "optional");
@@ -307,8 +311,8 @@ test("organizer marks people optional by name when starting a plan", async () =>
 
 test("mid-plan role change by name settles the round when the rest already agreed", async () => {
   const { repo, messenger, send, plan } = setup();
-  await repo.upsertUserByPhone(BOB, { name: "Bob" });
-  await repo.upsertUserByPhone(CARA, { name: "Cara" });
+  await repo.upsertUserByAddress(BOB, { name: "Bob" });
+  await repo.upsertUserByAddress(CARA, { name: "Cara" });
   await send(ALICE, "@planner dinner next weekend");
   await send(ALICE, "1");
   assert.equal((await plan()).status, "proposed");
@@ -333,15 +337,15 @@ test("an unknown name is asked about once, then applied when that person introdu
   assert.equal(questions().length, 1, "doesn't ask again");
 
   await send(CARA, "@planner I'm Sam");
-  assert.equal((await repo.upsertUserByPhone(CARA)).name, "Sam");
+  assert.equal((await repo.upsertUserByAddress(CARA)).name, "Sam");
   assert.equal(await roleOf(repo, CARA), "optional");
   assert.equal(messenger.outbox.at(-1)!.content, "Thanks, Sam! You're optional for dinner.");
 });
 
 test("an ambiguous name gets one question; the organizer answers with the full name", async () => {
   const { repo, messenger, send, plan } = setup();
-  await repo.upsertUserByPhone(BOB, { name: "Sam Lee" });
-  await repo.upsertUserByPhone(CARA, { name: "Sam Patel" });
+  await repo.upsertUserByAddress(BOB, { name: "Sam Lee" });
+  await repo.upsertUserByAddress(CARA, { name: "Sam Patel" });
   await send(ALICE, "@planner dinner next weekend");
   await send(ALICE, "@planner sam is optional");
   assert.match(messenger.outbox.at(-1)!.content, /^Which Sam do you mean: Sam Lee or Sam Patel\?/);
@@ -357,15 +361,15 @@ test("an ambiguous name gets one question; the organizer answers with the full n
 test("introducing yourself outside a plan just saves the name", async () => {
   const { repo, messenger, send } = setup();
   await send(BOB, "@planner my name is bob");
-  assert.equal((await repo.upsertUserByPhone(BOB)).name, "Bob");
+  assert.equal((await repo.upsertUserByAddress(BOB)).name, "Bob");
   assert.equal(messenger.outbox.at(-1)!.content, "Nice to meet you, Bob!");
   assert.equal(repo.plans.size, 0);
 });
 
 test("any member can make themselves optional, but not required and not someone else", async () => {
   const { repo, messenger, send } = setup();
-  await repo.upsertUserByPhone(BOB, { name: "Bob" });
-  await repo.upsertUserByPhone(CARA, { name: "Cara" });
+  await repo.upsertUserByAddress(BOB, { name: "Bob" });
+  await repo.upsertUserByAddress(CARA, { name: "Cara" });
   await send(ALICE, "@planner dinner next weekend, Bob is optional");
 
   await send(CARA, "@planner I'm optional");
@@ -382,13 +386,13 @@ test("any member can make themselves optional, but not required and not someone 
 
 test("preferences in chat are saved, confirmed in one line, and don't start a plan", async () => {
   const { repo, messenger, send } = setup();
-  await repo.upsertUserByPhone(BOB, { name: "Bob" });
+  await repo.upsertUserByAddress(BOB, { name: "Bob" });
   await send(BOB, "@planner I don't do mornings");
   assert.equal(messenger.outbox.at(-1)!.content, "Saved for Bob: never mornings.");
   assert.equal(repo.plans.size, 0);
 
   await send(BOB, "@planner I prefer evenings");
-  const bob = await repo.upsertUserByPhone(BOB);
+  const bob = await repo.upsertUserByAddress(BOB);
   assert.deepEqual(await repo.getPreferences(bob.id), {
     preferredTimes: ["evening"],
     preferredDays: [],
@@ -416,7 +420,7 @@ test("a one-off constraint with no plan open doesn't start one", async () => {
 
 test("a one-off constraint during a plan is a 'no' on the matching options, then the round is re-checked", async () => {
   const { repo, messenger, send, plan } = setup();
-  await repo.upsertUserByPhone(CARA, { name: "Cara" });
+  await repo.upsertUserByAddress(CARA, { name: "Cara" });
   await send(ALICE, "@planner dinner next weekend"); // Sat Nov 7 – Sun Nov 8, 3 options
   const options = repo.slots.filter((s) => s.round === 1);
   const day = (iso: string) => localParts(new Date(iso), "America/Los_Angeles").weekday;
@@ -424,7 +428,7 @@ test("a one-off constraint during a plan is a 'no' on the matching options, then
   assert.ok(sunday.length > 0 && sunday.length < options.length, "options on both days");
 
   await send(CARA, "@planner I can't do next sunday");
-  const cara = await repo.upsertUserByPhone(CARA);
+  const cara = await repo.upsertUserByAddress(CARA);
   const votes = repo.responses.filter((r) => r.userId === cara.id);
   assert.deepEqual(
     votes.map((v) => [repo.slots.find((s) => s.id === v.slotId)!.optionNumber, v.vote]),

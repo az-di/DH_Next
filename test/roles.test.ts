@@ -38,7 +38,7 @@ test("role statements don't swallow the request", () => {
   assert.deepEqual(roles("dinner next weekend"), { request: "dinner next weekend", statements: [] });
 });
 
-const user = (id: string, name: string | null): User => ({ id, phone: `+1555${id}`, name, timezone: null, createdAt: "" });
+const user = (id: string, name: string | null): User => ({ id, address: `imessage:+1555${id}`, name, timezone: null, createdAt: "" });
 const people = [user("1", "Sam Lee"), user("2", "Sam Patel"), user("3", "Priya"), user("4", null)];
 
 test("names match by full name, first name, or first name plus a last-name prefix", () => {

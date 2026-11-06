@@ -54,7 +54,7 @@ test("the router sends each id to the network that owns it", async () => {
   ]);
   await router.sendGroup("discord:channel:1", "a");
   await router.sendDirect("telegram:user:2", "b");
-  await router.sendDirect("+15550000001", "c");
+  await router.sendDirect("imessage:+15550000001", "c");
   assert.deepEqual(discord.outbox.map((m) => m.content), ["a"]);
   assert.deepEqual(telegram.outbox.map((m) => m.content), ["b"]);
   assert.deepEqual(imessage.outbox.map((m) => m.content), ["c"]);
@@ -62,7 +62,7 @@ test("the router sends each id to the network that owns it", async () => {
 
 test("the router refuses an id no running provider owns", () => {
   const router = new RoutingMessenger([{ network: "discord", messenger: new ConsoleMessenger() }]);
-  assert.throws(() => router.sendDirect("+15550000001", "c"), /no messaging provider is running/);
+  assert.throws(() => router.sendDirect("imessage:+15550000001", "c"), /no messaging provider is running/);
 });
 
 async function webhookStatus(providers: Provider[]) {

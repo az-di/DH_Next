@@ -187,7 +187,7 @@ test("connect page asks what to call you, prefills a name set in chat, and saves
   await new Promise((resolve) => server.once("listening", resolve));
   const base = `http://127.0.0.1:${(server.address() as import("node:net").AddressInfo).port}`;
 
-  const user = await repo.upsertUserByPhone("+15550000009", { name: `Sam "<b>"` });
+  const user = await repo.upsertUserByAddress("+15550000009", { name: `Sam "<b>"` });
   const token = createConnectToken(user.id);
   const html = await (await fetch(`${base}/connect?t=${encodeURIComponent(token)}`)).text();
   assert.match(html, /What should we call you\?/);
@@ -215,7 +215,7 @@ test("preferences form: prefilled from chat, saved on submit, and unusual blocks
   await new Promise((resolve) => server.once("listening", resolve));
   const base = `http://127.0.0.1:${(server.address() as import("node:net").AddressInfo).port}`;
 
-  const user = await repo.upsertUserByPhone("+15550000008", { name: "Theo" });
+  const user = await repo.upsertUserByAddress("+15550000008", { name: "Theo" });
   const all = [0, 1, 2, 3, 4, 5, 6];
   // As if Theo had said "@planner I don't do mornings, no friday nights, I prefer evenings".
   await repo.savePreferences(user.id, {

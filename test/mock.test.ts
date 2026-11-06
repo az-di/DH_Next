@@ -239,7 +239,7 @@ test("mock: the organizer can mark a member optional by name", async (t) => {
   t.after(close);
   await post("/mock/api/send", { from: MAYA, text: "@planner dinner next weekend, Sam is optional" });
   await until(() => chat.messages.some((m) => m.text.startsWith("Option ")), "a proposal");
-  const sam = [...repo.users.values()].find((u) => u.phone === SAM)!;
+  const sam = [...repo.users.values()].find((u) => u.address === SAM)!;
   assert.equal(repo.members.find((m) => m.userId === sam.id)!.role, "optional");
   assert.match(chat.messages.find((m) => m.from === MOCK_BOT)!.text, /Sam is optional\./);
 });
@@ -270,6 +270,6 @@ test("mock: reset chat keeps preferences and names; reset everything clears them
 
   const { body } = await post("/mock/api/reset", { everything: true });
   assert.equal(repo.preferences.size, 0);
-  assert.equal([...repo.users.values()].find((u) => u.phone === SAM)!.name, "Sam", "seeded name restored");
+  assert.equal([...repo.users.values()].find((u) => u.address === SAM)!.name, "Sam", "seeded name restored");
   assert.ok(body.users.every((u: any) => u.preferences === null));
 });

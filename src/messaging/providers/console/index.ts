@@ -13,8 +13,8 @@ export class ConsoleMessenger implements Messenger {
     return this.record(groupId, "group", content);
   }
 
-  async sendDirect(number: string, content: string) {
-    return this.record(number, "direct", content);
+  async sendDirect(address: string, content: string) {
+    return this.record(address, "direct", content);
   }
 
   private record(to: string, kind: "group" | "direct", content: string): SentMessage {
@@ -27,7 +27,7 @@ export class ConsoleMessenger implements Messenger {
 
 export const consoleProvider: ProviderDefinition = {
   name: "console",
-  // Simulates iMessage, so it takes bare phone numbers. Never auto-selected over a real provider.
+  // Simulates iMessage. Never auto-selected over a real provider.
   network: "imessage",
   isConfigured: () => false,
   async create() {

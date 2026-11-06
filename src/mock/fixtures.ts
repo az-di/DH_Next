@@ -105,8 +105,8 @@ export function createFakeAvailability(users: MockUser[], timezone: string) {
   return async (repo: Repo, userIds: string[], windowStart: Date, windowEnd: Date): Promise<Availability> => {
     const result: Availability = new Map();
     for (const userId of userIds) {
-      const phone = (await repo.getUser(userId))?.phone;
-      const user = users.find((u) => u.phone === phone);
+      const address = (await repo.getUser(userId))?.address;
+      const user = users.find((u) => u.phone === address);
       result.set(userId, user ? busyBlocks(user.busy, windowStart, windowEnd, timezone) : null);
     }
     return result;

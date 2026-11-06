@@ -1,8 +1,8 @@
 import type { Messenger, Provider } from "./types.ts";
 
 /**
- * Sends each message through the provider that owns its id, so several networks
- * can run side by side. Ids without a network prefix belong to iMessage.
+ * Sends each message through the provider that owns its address, so several
+ * networks can run side by side.
  */
 export class RoutingMessenger implements Messenger {
   private providers: Pick<Provider, "network" | "messenger">[];
@@ -11,11 +11,9 @@ export class RoutingMessenger implements Messenger {
     this.providers = providers;
   }
 
-  private pick(id: string): Messenger {
-    const provider =
-      this.providers.find((p) => id.startsWith(`${p.network}:`)) ??
-      this.providers.find((p) => p.network === "imessage");
-    if (!provider) throw new Error(`no messaging provider is running for ${id}`);
+  private pick(address: string): Messenger {
+    const provider = this.providers.find((p) => address.startsWith(`${p.network}:`));
+    if (!provider) throw new Error(`no messaging provider is running for ${address}`);
     return provider.messenger;
   }
 
@@ -23,7 +21,7 @@ export class RoutingMessenger implements Messenger {
     return this.pick(groupId).sendGroup(groupId, content);
   }
 
-  sendDirect(number: string, content: string) {
-    return this.pick(number).sendDirect(number, content);
+  sendDirect(address: string, content: string) {
+    return this.pick(address).sendDirect(address, content);
   }
 }

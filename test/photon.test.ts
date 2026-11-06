@@ -18,10 +18,10 @@ test("text in a group maps to an inbound group message", () => {
   );
   assert.deepEqual(msg, {
     messageHandle: "m1",
-    from: "+15550000001",
-    botNumber: "+15550009999",
-    groupId: "any;+;chat123",
-    participants: ["+15550000001", "+15550000002"],
+    from: "imessage:+15550000001",
+    botAddress: "imessage:+15550009999",
+    groupId: "imessage:any;+;chat123",
+    participants: ["imessage:+15550000001", "imessage:+15550000002"],
     text: "@planner dinner",
     replyToHandle: null,
     reaction: null,

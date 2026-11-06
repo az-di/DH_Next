@@ -1,3 +1,4 @@
+import { imessageAddress } from "../../address.ts";
 import type { InboundMessage, InboundReaction } from "../../types.ts";
 import { sendblueConfig } from "./config.ts";
 
@@ -22,13 +23,14 @@ const TEXT_TAPBACK_RE = /^(liked|disliked|questioned|loved|laughed at|laughed|em
 export function parseInbound(body: Record<string, any>): InboundMessage {
   const text = String(body.content ?? "").trim();
   const replyToHandle = body.reply_to?.message_handle ?? body.thread_originator?.message_handle ?? null;
+  const bot = body.sendblue_number ?? body.to_number ?? sendblueConfig.fromNumber;
 
   return {
     messageHandle: String(body.message_handle ?? ""),
-    from: String(body.from_number ?? body.number ?? ""),
-    botNumber: body.sendblue_number ?? body.to_number ?? (sendblueConfig.fromNumber || null),
-    groupId: body.group_id ? String(body.group_id) : null,
-    participants: Array.isArray(body.participants) ? body.participants.map(String) : [],
+    from: imessageAddress.wrap(String(body.from_number ?? body.number ?? "")),
+    botAddress: bot ? imessageAddress.wrap(String(bot)) : null,
+    groupId: body.group_id ? imessageAddress.wrap(String(body.group_id)) : null,
+    participants: Array.isArray(body.participants) ? body.participants.map((p) => imessageAddress.wrap(String(p))) : [],
     text,
     replyToHandle,
     reaction: extractReaction(body, text, replyToHandle),

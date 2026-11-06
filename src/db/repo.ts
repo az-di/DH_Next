@@ -17,7 +17,7 @@ import type {
  */
 export interface Repo {
   // users
-  upsertUserByPhone(phone: string, patch?: Partial<Pick<User, "name" | "timezone">>): Promise<User>;
+  upsertUserByAddress(address: string, patch?: Partial<Pick<User, "name" | "timezone">>): Promise<User>;
   getUser(id: string): Promise<User | null>;
 
   // calendar connections
