@@ -5,7 +5,7 @@ import type { MemberRole, ParsedRequest, PreferenceUpdate } from "../types.ts";
 // and structure into friendly text. Claude implements it; templates + rules
 // are the always-available fallback.
 //
-// Option bubbles ("Option 1: Sat Nov 7, 7:00–9:00 PM") are NOT written by the
+// Option messages ("Option 1: Sat Nov 7, 7:00–9:00 PM") are NOT written by the
 // LLM. They're formatted deterministically so votes can be parsed back.
 
 export interface SlotView {

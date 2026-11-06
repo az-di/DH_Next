@@ -11,7 +11,7 @@ export interface ParsedVote {
   vote: Vote;
   optionNumber: number | null;
   allOptions?: boolean;
-  /** For tapbacks: the bot message that was reacted to. */
+  /** For reactions: the bot message that was reacted to. */
   targetHandle?: string | null;
   quotedText?: string | null;
 }
@@ -41,7 +41,7 @@ function wordVote(word: string): Vote | null {
 }
 
 /**
- * Parses tapbacks and short text replies into votes. Returns [] for anything
+ * Parses emoji reactions and short text replies into votes. Returns [] for anything
  * that isn't clearly a vote, so ordinary chat in the group is ignored.
  *
  * Supported text forms: "yes" / "no" / "maybe", "1", "1 3", "1 and 2",

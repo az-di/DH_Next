@@ -3,11 +3,9 @@ import { config, env } from "../../../config.ts";
 import { isMentioned } from "../../mentions.ts";
 import type { InboundHandler, InboundMessage, Messenger, Provider, ProviderDefinition, SentMessage } from "../../types.ts";
 
-// Discord adapter (discord.js gateway bot). A text channel (or thread) plays the
-// role of an iMessage group chat; a Discord user id plays the role of a phone
-// number. Ids are namespaced so they can't collide with iMessage ids and so the
-// router can tell which transport owns a send:
-//   discord:channel:<id>   discord:user:<id>
+// Discord provider (discord.js gateway bot). A text channel or thread is a group
+// chat, and members' display names fill in until someone introduces themselves.
+// Addresses: discord:channel:<id> and discord:user:<id>.
 //
 // Developer Portal → Bot, enable these privileged intents:
 //   - Message Content (read "@planner dinner next weekend")
@@ -112,7 +110,7 @@ export class DiscordMessenger implements Messenger {
     return { messageHandle: await this.sendAll(user, content), groupId: null };
   }
 
-  /** Returns the id of the first chunk, which is the one tapbacks/votes attach to. */
+  /** Returns the id of the first chunk, which is the one reactions attach to. */
   private async sendAll(target: Sendable, content: string): Promise<string> {
     let first = "";
     for (const part of chunk(content)) {

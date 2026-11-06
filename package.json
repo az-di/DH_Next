@@ -2,7 +2,7 @@
   "name": "dh-next",
   "version": "0.1.0",
   "private": true,
-  "description": "Group-chat planning agent: @mention the bot in an iMessage group and it finds a time that works for everyone.",
+  "description": "Group-chat planning agent: @mention the bot in a group chat and it finds a time that works for everyone.",
   "type": "module",
   "engines": {
     "node": ">=22.18"

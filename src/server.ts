@@ -5,6 +5,9 @@ import type { InboundHandler, Provider } from "./messaging/types.ts";
 import { createMockRouter, type MockDemoDeps } from "./mock/routes.ts";
 import type { Coordinator } from "./plans/coordinator.ts";
 
+// HTTP surface: provider webhooks, /health, calendar routes, and the /mock demo.
+// Knows nothing about specific providers. Each one mounts its own routes.
+
 export function createServer(deps: {
   repo: Repo;
   coordinator: Coordinator;

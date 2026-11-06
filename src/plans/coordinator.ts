@@ -392,7 +392,7 @@ export class Coordinator {
       reactions: this.supportsReactions(plan.groupId),
       reason: reason === "after_no" ? "after_no" : count > 1 ? "uncertain" : "confident",
     });
-    // One bubble per option so each can be tapbacked on its own.
+    // One message per option so each can get its own reaction.
     for (const slot of slots) {
       const sent = await this.messenger.sendGroup(
         plan.groupId,
@@ -649,8 +649,8 @@ export class Coordinator {
   }
 
   /**
-   * DMs are best-effort: a failed calendar link or reminder (e.g. Photon's
-   * shared-pool allowlist rejecting an unregistered number) must not break the plan.
+   * DMs are best-effort: a failed calendar link or reminder (e.g. a network
+   * rejecting the recipient) must not break the plan. Returns null when it fails.
    */
   private async sayDirect(address: string, message: BotMessage) {
     try {

@@ -1,6 +1,6 @@
 # DH_Next: group-chat planning agent
 
-Add the bot's number to an iMessage group chat, @mention it with a rough request
+Add the bot to a group chat (iMessage or Discord), @mention it with a rough request
 ("dinner sometime next weekend"), and it finds a time that works for everyone.
 It reads free/busy from connected calendars, proposes one time when it's
 confident (2–3 when it isn't), collects thumbs-up / thumbs-down / question-mark votes, and posts the locked-in
@@ -16,7 +16,7 @@ time back to the group.
         │
         ▼
  proposed (round 1) ── 1 option if confident, 2–3 if not; one bubble per option
-        │  votes: tapbacks (thumbs up = yes / thumbs down = no / question mark = maybe) or replies ("2", "1 and 3", "none")
+        │  votes: reactions (thumbs up = yes / thumbs down = no / question mark = maybe) or replies ("2", "1 and 3", "none")
         │  reminders: ≤2 per person at 50% / 85% to people who haven't voted;
         │    a voter who skipped the leading option gets one nudge about it instead
         │  deadline: 24h or halfway to the earliest slot, whichever is sooner
@@ -34,7 +34,8 @@ Sam is optional`, `@planner Sam and Priya are required`, `@planner make Theo opt
 Phone numbers still work (`optional: +15551234567`). An optional member's "no"
 lowers a slot's score but doesn't block it.
 
-Neither Photon nor Sendblue gives the bot contact names, so people tell it theirs:
+iMessage doesn't give the bot contact names, so people tell it theirs (Discord
+display names are picked up automatically):
 `@planner I'm Sam`. If a name is unknown or matches more than one person, the bot
 asks once. An unknown name is applied as soon as that person introduces themselves,
 and the organizer answers "Which Sam?" with the full name (`@planner Sam Patel`).
@@ -140,6 +141,65 @@ Suggested demo script:
 4. Hit **+12 hours** to show Theo's reminder DM, then **To deadline** to lock
    in Saturday 8 PM without him. Theo gets a heads-up DM.
 
+## Discord
+
+A text channel or thread acts as the group chat, and everyone who can see the
+channel joins the plan.
+
+1. In the [Developer Portal](https://discord.com/developers/applications), create an
+   application and add a bot. Under **Bot**, enable the **Message Content** and
+   **Server Members** intents, and copy the token into `DISCORD_BOT_TOKEN`.
+2. Under **Installation**, use Guild Install only. Invite it with:
+   `https://discord.com/oauth2/authorize?client_id=<APP_ID>&permissions=68672&integration_type=0&scope=bot`
+3. Set `BOT_NAME` to what people call the bot. Run `npm run dev`, then in a channel
+   send `@YourBot dinner next weekend`.
+
+Calendar links and reminders go out as DMs. If someone blocks DMs from server
+members, the bot says so in the channel and plans without their calendar.
+
+## Adding a provider
+
+The planning core only knows the contract in
+[src/messaging/types.ts](src/messaging/types.ts), so a new network is one folder
+plus one line. [src/messaging/providers/discord](src/messaging/providers/discord)
+is the best one to copy.
+
+1. **Create `src/messaging/providers/<name>/index.ts`** and export a
+   `ProviderDefinition`:
+   - `network`: the prefix for this network's addresses.
+   - `isConfigured()`: whether its credentials are present. Read env vars in this
+     folder, not in `config.ts`.
+   - `create()`: connect and return a `Provider`, which holds `capabilities`, a
+     `messenger`, and either `routes()` (webhooks) or `start()` (long-lived
+     connections).
+2. **Convert at the boundary.** Inbound, turn each event into an `InboundMessage`
+   whose addresses are all prefixed, using `addressing(network)` from
+   [address.ts](src/messaging/address.ts). Outbound, unwrap the address before
+   calling the network's API. Return the sent message's id as `messageHandle`, or
+   reactions can't be matched to an option.
+3. **Register it** in `PROVIDERS` in
+   [src/messaging/registry.ts](src/messaging/registry.ts), and add its env vars to
+   `.env.example`.
+4. **Test it.** Add a wire-format sample to `inboundSamples` in
+   [test/providers.test.ts](test/providers.test.ts), so it has to meet the shared
+   contract, and test its parsing in its own file.
+
+Nothing else should change. If a provider seems to need an edit to the coordinator,
+add a capability or a field on `InboundMessage` rather than checking which network
+it is.
+
+Check these before you start, since networks differ here and the core makes
+assumptions about them:
+
+- **Can the bot list group members?** Plans treat listed members as required, and
+  people who appear later as optional. With no member list, only the organizer would
+  be required, so their vote alone could lock the plan. That needs a new rule first.
+- **Can the bot DM people first?** A failed DM is handled, but those people never
+  get a calendar link or reminders.
+- **Do reactions reach the bot?** If not, set `capabilities.reactions` to `false`.
+- **Are there sending limits?** Reminders go out on a timer, long after the last
+  message from that person.
+
 ## Going live
 
 1. **Supabase**: run `supabase/migrations/*.sql` in order, then set `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY`.
@@ -160,7 +220,7 @@ Suggested demo script:
 - **Photon Pro uses a shared pool of lines.** Pro can't create groups, gets no group-change events, and only messages
   registered users. Photon doesn't document whether a pool line receives messages in a group a person creates, so
   [docs/testing-photon.md](docs/testing-photon.md) checks that first. Business (dedicated line) supports groups fully.
-- **Tapbacks (Sendblue only)**: Photon delivers native reactions, but Sendblue doesn't document inbound reaction fields. We accept likely
+- **Sendblue reactions**: Photon delivers native reactions, but Sendblue doesn't document inbound reaction fields. We accept likely
   structured fields plus iMessage's `Liked "…"` text form, and numbered replies always
   work. Confirm with a real webhook capture.
 - **Scale**: the per-group lock, webhook dedupe, and scheduler are in-process. Running

@@ -50,7 +50,7 @@ export interface Repo {
   recordVote(planId: string, slotId: string, userId: string, vote: Vote): Promise<Response>;
   listResponses(planId: string): Promise<Response[]>;
 
-  // proposal message → slot (for tapbacks)
+  // proposal message → slot (for reaction votes)
   linkProposalMessage(messageId: string, planId: string, slotId: string): Promise<void>;
   getProposalMessage(messageId: string): Promise<{ planId: string; slotId: string } | null>;
 }

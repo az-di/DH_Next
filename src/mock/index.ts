@@ -6,6 +6,10 @@ import { MockClock } from "./clock.ts";
 import { createFakeAvailability, MOCK_BOT, MOCK_USERS, type MockUser } from "./fixtures.ts";
 import type { MockDemoDeps } from "./routes.ts";
 
+// Wires up the /mock demo. It isn't a provider in the registry, because it replaces
+// the database, clock, and calendars as well as messaging. Its bare phone numbers
+// have no network prefix, which is fine because nothing routes them.
+
 export interface MockDemo {
   messenger: MockMessenger;
   /** Always in-memory, so reset can clear it and demo data never reaches Supabase. */

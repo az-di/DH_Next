@@ -2,8 +2,8 @@ import type { MemberRole, User } from "../types.ts";
 
 // Plain-language role changes by name: "Sam is optional", "Sam and Priya are
 // required", "make Theo optional", "optional: Sam, Priya". Names are matched
-// against the group's users. Neither Photon nor Sendblue gives us contact
-// names, so names come from "@planner I'm Sam" (or the mock's seeded users).
+// against the group's users. Names come from "@planner I'm Sam", from the network
+// when it provides them (Discord does, iMessage doesn't), or the mock's seeded users.
 // Phone numbers are still handled by extractOptional in the coordinator.
 
 export interface RoleStatement {

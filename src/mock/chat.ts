@@ -1,6 +1,6 @@
 import type { Messenger, SentMessage } from "../messaging/types.ts";
 
-// Mock iMessage for local development and demos (MESSAGING_PROVIDER=mock).
+// In-memory chat for local development and demos (MESSAGING_PROVIDERS=mock).
 // Nothing leaves the process: bot messages land in an in-memory group thread
 // that the /mock page renders live.
 
