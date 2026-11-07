@@ -17,7 +17,7 @@ const member = (userId: string, extra: Partial<PlanMember> = {}): PlanMember => 
   remindersSent: 0,
   lastRemindedAt: null,
   timedOut: false,
-  nudgedRound: null,
+  nudgedRound: null, statedAvailability: null,
   ...extra,
 });
 const slot = (id: string, hour: number): CandidateSlot => ({

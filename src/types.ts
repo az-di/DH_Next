@@ -71,6 +71,11 @@ export interface PendingRole {
   candidates: string[]; // user ids
 }
 
+export interface TimeWindow {
+  start: string; // UTC ISO
+  end: string;
+}
+
 export interface PlanMember {
   planId: string;
   userId: string;
@@ -81,6 +86,8 @@ export interface PlanMember {
   timedOut: boolean;
   /** Round in which they got a nudge about the leading option (at most one per round). */
   nudgedRound: number | null;
+  /** Times they said work, when asked by DM. Null: no answer yet. Empty: nothing works. */
+  statedAvailability: TimeWindow[] | null;
 }
 
 export interface CandidateSlot {

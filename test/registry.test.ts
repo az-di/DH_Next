@@ -48,9 +48,9 @@ test("the router sends each id to the network that owns it", async () => {
   const discord = new ConsoleMessenger();
   const telegram = new ConsoleMessenger();
   const router = new RoutingMessenger([
-    { network: "imessage", capabilities: { reactions: true }, messenger: imessage },
-    { network: "discord", capabilities: { reactions: true }, messenger: discord },
-    { network: "telegram", capabilities: { reactions: false }, messenger: telegram },
+    { network: "imessage", capabilities: { reactions: true, collectByDm: false }, messenger: imessage },
+    { network: "discord", capabilities: { reactions: true, collectByDm: false }, messenger: discord },
+    { network: "telegram", capabilities: { reactions: false, collectByDm: false }, messenger: telegram },
   ]);
   await router.sendGroup("discord:channel:1", "a");
   await router.sendDirect("telegram:user:2", "b");
@@ -61,7 +61,7 @@ test("the router sends each id to the network that owns it", async () => {
 });
 
 test("the router refuses an id no running provider owns", () => {
-  const router = new RoutingMessenger([{ network: "discord", capabilities: { reactions: true }, messenger: new ConsoleMessenger() }]);
+  const router = new RoutingMessenger([{ network: "discord", capabilities: { reactions: true, collectByDm: false }, messenger: new ConsoleMessenger() }]);
   assert.throws(() => router.sendDirect("imessage:+15550000001", "c"), /no messaging provider is running/);
 });
 
@@ -83,7 +83,7 @@ async function webhookStatus(providers: Provider[]) {
 }
 
 test("the Sendblue webhook only exists when a provider that uses it is running", async () => {
-  const discordOnly: Provider = { name: "discord", network: "discord", capabilities: { reactions: true }, messenger: new ConsoleMessenger() };
+  const discordOnly: Provider = { name: "discord", network: "discord", capabilities: { reactions: true, collectByDm: false }, messenger: new ConsoleMessenger() };
   assert.equal((await webhookStatus([discordOnly])).status, 404);
 
   for (const def of [consoleProvider, sendblueProvider]) {

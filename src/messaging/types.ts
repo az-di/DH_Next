@@ -46,6 +46,11 @@ export interface Messenger {
 export interface Capabilities {
   /** Whether emoji reactions reach the bot as votes. Without them, the bot only asks for replies. */
   reactions: boolean;
+  /**
+   * Plan by DM: ask each member privately what times work, then the organizer
+   * picks. Without it, the bot proposes times in the group and people vote there.
+   */
+  collectByDm: boolean;
 }
 
 /** A connected chat network, ready to send and receive. */

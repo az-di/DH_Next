@@ -28,7 +28,7 @@ const router = new RoutingMessenger(providers);
 const coordinator = new Coordinator({
   repo,
   messenger: mock?.messenger ?? router,
-  supportsReactions: mock ? undefined : (groupId) => router.supportsReactions(groupId),
+  capabilities: mock ? undefined : (groupId) => router.capabilities(groupId),
   brain: createBrain(),
   ...mock?.coordinatorDeps,
 });

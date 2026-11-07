@@ -49,7 +49,7 @@ and the organizer answers "Which Sam?" with the full name (`@planner Sam Patel`)
 | Database | Supabase Postgres (`supabase/migrations`), in-memory fallback for dev/tests |
 | Calendar | Google OAuth, `calendar.freebusy` scope only |
 | Slot finding | Deterministic code, no LLM |
-| LLM | Claude (`claude-opus-5-5`) parses requests and writes friendly copy; rules/templates as fallback |
+| LLM | Claude (`claude-sonnet-5-5`) parses requests and writes friendly copy; rules/templates as fallback |
 | Scheduler | In-process interval for grace periods, reminders, and deadlines |
 
 ## Layout
@@ -144,7 +144,23 @@ Suggested demo script:
 ## Discord
 
 A text channel or thread acts as the group chat, and everyone who can see the
-channel joins the plan.
+channel joins the plan. Discord plans by DM instead of voting in the channel:
+
+```
+@planner dinner next weekend
+        │
+        ▼
+ collecting ── DMs everyone (15 people at most): "what times work for you?"
+        │  replies in plain language: "Saturday after 6, not Sunday", "anytime", "none"
+        │  reply again to change an answer; up to 2 reminders to people who haven't answered
+        │  closes when everyone required has answered, or at the deadline
+        │    (24h, or halfway to the end of the window if sooner)
+        ▼
+ organizer_pick ── DMs the organizer up to 3 times, those with the fewest conflicts,
+        │  and who can't make each one. They reply with a number within 24 hours.
+        ├── picked ──▶ locked ✓ (posted to the channel)
+        └── no pick ─▶ plan closes, so the channel can start another
+```
 
 1. In the [Developer Portal](https://discord.com/developers/applications), create an
    application and add a bot. Under **Bot**, enable the **Message Content** and
@@ -154,8 +170,13 @@ channel joins the plan.
 3. Set `BOT_NAME` to what people call the bot. Run `npm run dev`, then in a channel
    send `@YourBot dinner next weekend`.
 
-Calendar links and reminders go out as DMs. If someone blocks DMs from server
-members, the bot says so in the channel and plans without their calendar.
+If someone blocks DMs from server members, the bot names them in the channel and
+plans without them. If that's the organizer, they pick in the channel instead, and
+the options there don't show who can't make each one.
+
+With Google configured, connected calendars count too, but the bot doesn't send
+connect links on Discord. Plans live in memory unless Supabase is set up, so a
+restart loses them, and `npm run dev` restarts whenever a file is saved.
 
 ## Adding a provider
 
@@ -197,6 +218,7 @@ assumptions about them:
 - **Can the bot DM people first?** A failed DM is handled, but those people never
   get a calendar link or reminders.
 - **Do reactions reach the bot?** If not, set `capabilities.reactions` to `false`.
+- **Vote in the group, or plan by DM?** `capabilities.collectByDm` picks the flow.
 - **Are there sending limits?** Reminders go out on a timer, long after the last
   message from that person.
 
@@ -212,7 +234,8 @@ assumptions about them:
 ## Privacy
 
 - Only free/busy blocks are read, never event titles or details (the OAuth scope can't see them).
-- The bot acts only on messages that @mention it or vote on its open proposal.
+- The bot acts only on messages that @mention it, vote on its open proposal, or are sent to it by DM.
+- With Claude configured, DM replies about availability are sent to Anthropic to be read. Only the resulting times are stored.
 - Preferences will be learned from how people respond, not from calendar contents.
 
 ## Open risks / next steps

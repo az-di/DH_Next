@@ -112,6 +112,7 @@ export class MemoryRepo implements Repo {
       lastRemindedAt: null,
       timedOut: false,
       nudgedRound: null,
+      statedAvailability: null,
     };
     this.members.push(member);
     return member;

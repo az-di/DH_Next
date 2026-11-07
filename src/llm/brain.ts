@@ -1,5 +1,5 @@
 import type { RoleStatement } from "../plans/roles.ts";
-import type { MemberRole, ParsedRequest, PreferenceUpdate } from "../types.ts";
+import type { MemberRole, ParsedRequest, PreferenceUpdate, TimeWindow } from "../types.ts";
 
 // The coordinator's interface to language: turning a request into structure,
 // and structure into friendly text. Claude implements it; templates + rules
@@ -55,7 +55,39 @@ export type BotMessage =
   | { kind: "preferences_saved"; name: string; summary: string }
   /** A one-off "I can't do Saturday": the options it turned into a "no" (maybe none). */
   | { kind: "constraint_noted"; name: string; optionNumbers: number[] }
-  | { kind: "nothing_scheduled" };
+  | { kind: "nothing_scheduled" }
+  // Planning by DM: asking people what works, then the organizer picks.
+  | { kind: "availability_asked"; activity: string; windowLabel: string; deadlineLabel: string; optionalNames: string[] }
+  | {
+      kind: "availability_ask";
+      name: string | null;
+      organizerName: string | null; // null when this person is the organizer
+      activity: string;
+      windowLabel: string;
+      deadlineLabel: string;
+    }
+  | { kind: "availability_saved"; activity: string; windowLabels: string[]; waitingOn: number }
+  | { kind: "availability_unclear"; activity: string; windowLabel: string }
+  | { kind: "availability_reminder"; name: string | null; activity: string; deadlineLabel: string }
+  /** They're in several open plans and the reply didn't say which. */
+  | { kind: "availability_which"; activities: string[] }
+  /** A late answer: the organizer is already choosing. */
+  | { kind: "availability_closed"; activity: string }
+  | { kind: "dm_unreachable"; names: string[] }
+  | { kind: "too_many_people"; count: number; max: number }
+  | {
+      kind: "availability_options";
+      activity: string;
+      /** Set when these go to the group because the organizer's DM failed. */
+      organizerName: string | null;
+      answered: number;
+      total: number;
+      noAnswerNames: string[];
+      options: (SlotView & { cantNames: string[] })[];
+    }
+  | { kind: "organizer_picking"; activity: string; organizerName: string; answered: number; total: number }
+  | { kind: "pick_invalid"; activity: string; optionCount: number }
+  | { kind: "pick_expired"; activity: string; organizerName: string };
 
 /** What an @mention is, with the fields for that kind. */
 export type Interpretation =
@@ -69,8 +101,26 @@ export type Interpretation =
   | { kind: "constraint"; windows: { start: string; end: string }[] }
   | { kind: "other" };
 
+/** What a DM reply says about when someone can make it. */
+export type AvailabilityReading =
+  /** "Saturday after 6, not Sunday": the times that work. */
+  | { kind: "windows"; windows: TimeWindow[] }
+  /** "I can't make it at all". */
+  | { kind: "none" }
+  | { kind: "unclear" };
+
+export interface AvailabilityContext {
+  now: Date;
+  timezone: string;
+  activity: string;
+  /** The plan's window. "Anytime" means all of it. */
+  window: TimeWindow;
+}
+
 export interface Brain {
   /** One parse per @mention (the mention itself already stripped). */
   interpret(text: string, opts: { now: Date; timezone: string }): Promise<Interpretation>;
+  /** Reads a DM reply to "what times work for you?". */
+  parseAvailability(text: string, context: AvailabilityContext): Promise<AvailabilityReading>;
   compose(message: BotMessage): Promise<string>;
 }

@@ -2,12 +2,17 @@ import { hasAnthropic } from "../config.ts";
 import type { Brain } from "./brain.ts";
 import { ClaudeBrain } from "./claude.ts";
 import { interpretWithRules } from "./interpret.ts";
+import { parseAvailabilityWithRules } from "./rules.ts";
 import { renderTemplate } from "./templates.ts";
 
 /** Rules + templates only: deterministic, free, and used in tests. */
 export class TemplateBrain implements Brain {
   async interpret(text: string, opts: { now: Date; timezone: string }) {
     return interpretWithRules(text, opts).result;
+  }
+
+  async parseAvailability(text: string, context: Parameters<Brain["parseAvailability"]>[1]) {
+    return parseAvailabilityWithRules(text, context);
   }
 
   async compose(message: Parameters<Brain["compose"]>[0]) {

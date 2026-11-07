@@ -5,7 +5,7 @@ import { config, hasGoogle } from "../config.ts";
 import type { Repo } from "../db/repo.ts";
 import { formatOption, type Brain, type BotMessage } from "../llm/index.ts";
 import { localPart } from "../messaging/address.ts";
-import type { InboundMessage, Messenger } from "../messaging/types.ts";
+import type { Capabilities, InboundMessage, Messenger } from "../messaging/types.ts";
 import { isMentioned, stripMention } from "../messaging/mentions.ts";
 import { parseVotes, type ParsedVote } from "../messaging/votes.ts";
 import { formatDeadline, formatSlot } from "../time.ts";
@@ -17,8 +17,19 @@ import type {
   PlanMember,
   PreferenceUpdate,
   Preferences,
+  TimeWindow,
   User,
 } from "../types.ts";
+import {
+  clipWindows,
+  collectionDeadline,
+  describeWindow,
+  fewestConflicts,
+  invertWindows,
+  MAX_DM_MEMBERS,
+  MAX_DM_OPTIONS,
+  ORGANIZER_PICK_MS,
+} from "./dm-planning.ts";
 import { KeyedLock } from "./lock.ts";
 import { mergePreferences, describeUpdate } from "./preferences.ts";
 import { isSelf, parseNameIntro, resolveName, type RoleStatement } from "./roles.ts";
@@ -42,9 +53,11 @@ export interface CoordinatorDeps {
   calendarsEnabled?: boolean;
   /** Free/busy lookup. Defaults to connected calendars; the /mock demo swaps in seeded data. */
   loadAvailability?: typeof loadAvailability;
-  /** Whether emoji votes work in this group chat. Defaults to yes. */
-  supportsReactions?: (groupId: string) => boolean;
+  /** What the network behind a group chat can do. Defaults to emoji votes in the group. */
+  capabilities?: (groupId: string) => Capabilities | undefined;
 }
+
+const DEFAULT_CAPABILITIES: Capabilities = { reactions: true, collectByDm: false };
 
 /**
  * The central coordinator. Each member's "agent" is their profile and
@@ -59,7 +72,7 @@ export class Coordinator {
   private timezone: string;
   private calendarsEnabled: boolean;
   private loadAvailability: typeof loadAvailability;
-  private supportsReactions: (groupId: string) => boolean;
+  private capabilitiesOf: (groupId: string) => Capabilities;
   private lock = new KeyedLock();
 
   constructor(deps: CoordinatorDeps) {
@@ -70,7 +83,7 @@ export class Coordinator {
     this.timezone = deps.timezone ?? config.defaultTimezone;
     this.calendarsEnabled = deps.calendarsEnabled ?? hasGoogle();
     this.loadAvailability = deps.loadAvailability ?? loadAvailability;
-    this.supportsReactions = deps.supportsReactions ?? (() => true);
+    this.capabilitiesOf = (groupId) => deps.capabilities?.(groupId) ?? DEFAULT_CAPABILITIES;
   }
 
   // ───────────────────────────── inbound ─────────────────────────────
@@ -78,8 +91,7 @@ export class Coordinator {
   async handleInbound(msg: InboundMessage): Promise<void> {
     if (msg.isOutbound || !msg.from) return;
     if (!msg.groupId) {
-      // MVP plans live in group chats. A DM gets a pointer (and proves the line works).
-      if (msg.text && !msg.reaction) await this.sayDirect(msg.from, { kind: "dm_help" });
+      if (msg.text && !msg.reaction) await this.handleDirect(msg);
       return;
     }
     const groupId = msg.groupId;
@@ -135,6 +147,12 @@ export class Coordinator {
     const addresses = new Set([msg.from, ...msg.participants]);
     if (msg.botAddress) addresses.delete(msg.botAddress);
 
+    const byDm = this.capabilitiesOf(groupId).collectByDm;
+    if (byDm && addresses.size > MAX_DM_MEMBERS) {
+      await this.say(groupId, { kind: "too_many_people", count: addresses.size, max: MAX_DM_MEMBERS });
+      return;
+    }
+
     const plan = await this.repo.createPlan({
       groupId,
       organizerId: organizer.id,
@@ -157,13 +175,18 @@ export class Coordinator {
       if (!user.name && networkName) user = await this.repo.upsertUserByAddress(address, { name: networkName });
       const role: MemberRole = optionalPhones.has(localPart(address)) ? "optional" : "essential";
       await this.repo.addMember(plan.id, user.id, role);
-      if (this.calendarsEnabled && !(await this.repo.getCalendarConnection(user.id))) unconnected.push(user);
+      if (!byDm && this.calendarsEnabled && !(await this.repo.getCalendarConnection(user.id))) unconnected.push(user);
     }
     const roles = await this.applyRoles(plan, statements, organizer);
     const optional = (await this.repo.listMembers(plan.id)).filter((m) => m.role === "optional");
     const optionalNames = (await Promise.all(optional.map((m) => this.repo.getUser(m.userId)))).flatMap((u) =>
       u ? [displayName(u)] : [],
     );
+
+    if (byDm) {
+      await this.askEveryone(plan, optionalNames, roles.question);
+      return;
+    }
 
     await this.say(groupId, {
       kind: "ack",
@@ -192,6 +215,202 @@ export class Coordinator {
     if (unreachable.length) await this.say(groupId, { kind: "dm_failed", names: unreachable });
     await this.repo.updatePlan(plan.id, {
       deadline: new Date(this.now().getTime() + COLLECTING_GRACE_MS).toISOString(),
+    });
+  }
+
+  // ───────────────────────── planning by DM ──────────────────────────
+  //
+  // collecting: everyone is asked by DM, and their answers are saved on the member.
+  // organizer_pick: once all are in (or the deadline passes), the organizer picks.
+
+  private async askEveryone(created: Plan, optionalNames: string[], question: BotMessage | null): Promise<void> {
+    const now = this.now();
+    const deadline = collectionDeadline(now, new Date(created.request.windowEnd));
+    const plan = await this.repo.updatePlan(created.id, {
+      deadline: deadline.toISOString(),
+      roundStartedAt: now.toISOString(),
+    });
+    const { activity } = plan.request;
+    const label = windowLabel(plan.request.windowStart, plan.request.windowEnd, plan.timezone);
+    const deadlineLabel = formatDeadline(deadline, plan.timezone);
+
+    await this.say(plan.groupId, { kind: "availability_asked", activity, windowLabel: label, deadlineLabel, optionalNames });
+    if (question) await this.say(plan.groupId, question);
+
+    const organizer = await this.repo.getUser(plan.organizerId);
+    const unreachable: string[] = [];
+    for (const member of await this.repo.listMembers(plan.id)) {
+      const user = await this.repo.getUser(member.userId);
+      if (!user) continue;
+      const sent = await this.sayDirect(user.address, {
+        kind: "availability_ask",
+        name: user.name,
+        organizerName: user.id === plan.organizerId || !organizer ? null : displayName(organizer),
+        activity,
+        windowLabel: label,
+        deadlineLabel,
+      });
+      if (sent) continue;
+      // Nobody should wait for an answer that can't come.
+      unreachable.push(displayName(user));
+      await this.repo.updateMember(plan.id, user.id, { timedOut: true });
+    }
+    if (unreachable.length) await this.say(plan.groupId, { kind: "dm_unreachable", names: unreachable });
+    await this.closeCollectionIfDone(plan);
+  }
+
+  /** A DM to the bot: an answer about times, the organizer's pick, or someone who needs pointing to a group. */
+  private async handleDirect(msg: InboundMessage): Promise<void> {
+    const sender = await this.repo.upsertUserByAddress(msg.from);
+    const text = stripMention(msg.text);
+
+    const plans: Plan[] = [];
+    for (const plan of await this.repo.listOpenPlans()) {
+      if (!this.capabilitiesOf(plan.groupId).collectByDm) continue;
+      if ((await this.repo.listMembers(plan.id)).some((m) => m.userId === sender.id)) plans.push(plan);
+    }
+    const picking = plans.filter((p) => p.status === "organizer_pick" && p.organizerId === sender.id);
+    const collecting = plans.filter((p) => p.status === "collecting");
+
+    if (picking.length && /^\s*\d+\s*$/.test(text)) {
+      const plan = picking.at(-1)!;
+      await this.lock.run(plan.groupId, () => this.handleOrganizerPick(plan, sender, text));
+      return;
+    }
+    if (collecting.length) {
+      const named = collecting.filter((p) => text.toLowerCase().includes(p.request.activity.toLowerCase()));
+      const plan = collecting.length === 1 ? collecting[0] : named.length === 1 ? named[0] : null;
+      if (plan) await this.lock.run(plan.groupId, () => this.saveAvailability(plan.id, sender, text));
+      else await this.sayDirect(sender.address, { kind: "availability_which", activities: collecting.map((p) => p.request.activity) });
+      return;
+    }
+    if (picking.length) {
+      const plan = picking.at(-1)!;
+      const optionCount = (await this.repo.listSlots(plan.id, plan.round)).length;
+      await this.sayDirect(sender.address, { kind: "pick_invalid", activity: plan.request.activity, optionCount });
+      return;
+    }
+    if (plans.length) {
+      await this.sayDirect(sender.address, { kind: "availability_closed", activity: plans.at(-1)!.request.activity });
+      return;
+    }
+    await this.sayDirect(sender.address, { kind: "dm_help" });
+  }
+
+  private async saveAvailability(planId: string, sender: User, text: string): Promise<void> {
+    const plan = await this.repo.getPlan(planId); // re-read inside the lock
+    if (!plan) return;
+    const { activity, windowStart, windowEnd } = plan.request;
+    if (plan.status !== "collecting") {
+      await this.sayDirect(sender.address, { kind: "availability_closed", activity });
+      return;
+    }
+    const window: TimeWindow = { start: windowStart, end: windowEnd };
+    const reading = await this.brain.parseAvailability(text, { now: this.now(), timezone: plan.timezone, activity, window });
+    const windows = reading.kind === "windows" ? clipWindows(reading.windows, window) : [];
+    // Times entirely outside the plan aren't an answer, so ask again rather than count them as "nothing works".
+    if (reading.kind === "unclear" || (reading.kind === "windows" && windows.length === 0)) {
+      await this.sayDirect(sender.address, {
+        kind: "availability_unclear",
+        activity,
+        windowLabel: windowLabel(windowStart, windowEnd, plan.timezone),
+      });
+      return;
+    }
+
+    await this.repo.updateMember(plan.id, sender.id, { statedAvailability: windows, timedOut: false });
+    const waitingOn = (await this.repo.listMembers(plan.id)).filter(isAwaitedAnswer).length;
+    await this.sayDirect(sender.address, {
+      kind: "availability_saved",
+      activity,
+      windowLabels: windows.map((w) => describeWindow(w, window, plan.timezone)),
+      waitingOn,
+    });
+    await this.closeCollectionIfDone(plan);
+  }
+
+  private async closeCollectionIfDone(plan: Plan): Promise<void> {
+    if (!(await this.repo.listMembers(plan.id)).some(isAwaitedAnswer)) await this.offerTimesToOrganizer(plan);
+  }
+
+  /** Finds the overlap in what people said and asks the organizer to choose. */
+  private async offerTimesToOrganizer(plan: Plan): Promise<void> {
+    const members = await this.repo.listMembers(plan.id);
+    const bounds: TimeWindow = { start: plan.request.windowStart, end: plan.request.windowEnd };
+    const availability = await this.loadAvailability(
+      this.repo,
+      members.map((m) => m.userId),
+      new Date(bounds.start),
+      new Date(bounds.end),
+    );
+    const preferences = new Map<string, Preferences>();
+    for (const m of members) {
+      const prefs = await this.repo.getPreferences(m.userId);
+      if (prefs) preferences.set(m.userId, prefs);
+      if (m.statedAvailability === null) continue;
+      const busy = invertWindows(m.statedAvailability, bounds).map((w) => ({ start: new Date(w.start), end: new Date(w.end) }));
+      availability.set(m.userId, [...(availability.get(m.userId) ?? []), ...busy]);
+    }
+    const ranked = scoreSlots({
+      request: plan.request,
+      timezone: plan.timezone,
+      availability,
+      // Everyone counts as optional here so conflicts lower a slot instead of removing it:
+      // when nothing suits everyone, the organizer still sees the closest times.
+      roles: new Map(members.map((m) => [m.userId, "optional" as const])),
+      notBefore: this.now(),
+      preferences,
+      anyReasonableHour: true,
+    });
+    if (ranked.length === 0) {
+      await this.fail(plan);
+      return;
+    }
+    const picked = pickDistinct(fewestConflicts(ranked), MAX_DM_OPTIONS, plan.timezone);
+    const slots = await this.repo.addSlots(
+      picked.map((s, i) => ({
+        planId: plan.id,
+        round: plan.round,
+        optionNumber: i + 1,
+        start: s.start.toISOString(),
+        end: s.end.toISOString(),
+        score: s.score,
+      })),
+    );
+    const deadline = new Date(this.now().getTime() + ORGANIZER_PICK_MS);
+    await this.repo.updatePlan(plan.id, { status: "organizer_pick", deadline: deadline.toISOString() });
+
+    const nameOf = async (id: string) => {
+      const user = await this.repo.getUser(id);
+      return user ? displayName(user) : "someone";
+    };
+    const noAnswer = members.filter((m) => m.statedAvailability === null);
+    const summary = { activity: plan.request.activity, answered: members.length - noAnswer.length, total: members.length };
+    const organizer = await this.repo.getUser(plan.organizerId);
+    const noAnswerNames = await Promise.all(noAnswer.map((m) => nameOf(m.userId)));
+    const options = await Promise.all(
+      slots.map(async (slot, i) => ({
+        optionNumber: slot.optionNumber,
+        label: this.slotLabel(slot, plan),
+        cantNames: await Promise.all(picked[i].conflictUserIds.map(nameOf)),
+      })),
+    );
+
+    const delivered =
+      organizer &&
+      (await this.sayDirect(organizer.address, { kind: "availability_options", organizerName: null, noAnswerNames, options, ...summary }));
+    const organizerName = organizer ? displayName(organizer) : "the organizer";
+    if (delivered) {
+      await this.say(plan.groupId, { kind: "organizer_picking", organizerName, ...summary });
+      return;
+    }
+    // The organizer can't be DMed, so they pick in the group. Who said what stays private.
+    await this.say(plan.groupId, {
+      kind: "availability_options",
+      organizerName,
+      noAnswerNames: [],
+      options: options.map((o) => ({ ...o, cantNames: [] })),
+      ...summary,
     });
   }
 
@@ -389,7 +608,7 @@ export class Coordinator {
       round: plan.round,
       options: slots.map((s) => ({ optionNumber: s.optionNumber, label: this.slotLabel(s, plan) })),
       deadlineLabel: formatDeadline(deadline, plan.timezone),
-      reactions: this.supportsReactions(plan.groupId),
+      reactions: this.capabilitiesOf(plan.groupId).reactions,
       reason: reason === "after_no" ? "after_no" : count > 1 ? "uncertain" : "confident",
     });
     // One message per option so each can get its own reaction.
@@ -481,7 +700,9 @@ export class Coordinator {
     const maybeIds = slotVotes.filter((r) => r.vote === "maybe").map((r) => r.userId);
     // "Didn't hear from" means no vote on any option that round, not just this one.
     const roundSlotIds = new Set((await this.repo.listSlots(plan.id, slot.round)).map((s) => s.id));
-    const missing = members.filter((m) => !responses.some((r) => r.userId === m.userId && roundSlotIds.has(r.slotId)));
+    const missing = this.capabilitiesOf(plan.groupId).collectByDm
+      ? members.filter((m) => m.statedAvailability === null)
+      : members.filter((m) => !responses.some((r) => r.userId === m.userId && roundSlotIds.has(r.slotId)));
 
     const label = this.slotLabel(slot, plan);
     await this.say(plan.groupId, {
@@ -522,6 +743,14 @@ export class Coordinator {
   private async handleOrganizerPick(plan: Plan, sender: User, text: string): Promise<void> {
     if (sender.id !== plan.organizerId) return;
     const choice = /^\s*(\d)\s*$/.exec(text);
+    if (this.capabilitiesOf(plan.groupId).collectByDm) {
+      // Options were numbered when offered, and there are no votes to re-rank them by.
+      const slots = await this.repo.listSlots(plan.id, plan.round);
+      const slot = choice && slots.find((s) => s.optionNumber === Number(choice[1]));
+      if (slot) await this.lockIn(plan, slot.id);
+      else await this.sayDirect(sender.address, { kind: "pick_invalid", activity: plan.request.activity, optionCount: slots.length });
+      return;
+    }
     if (!choice) return;
     const [slots, responses, members] = await Promise.all([
       this.repo.listSlots(plan.id),
@@ -556,6 +785,10 @@ export class Coordinator {
     const now = this.now();
     const deadline = new Date(plan.deadline);
 
+    if (this.capabilitiesOf(plan.groupId).collectByDm) {
+      await this.tickDmPlan(plan, now, deadline);
+      return;
+    }
     if (plan.status === "collecting") {
       if (now >= deadline) await this.proposeRound(plan, "confident");
       return;
@@ -614,13 +847,48 @@ export class Coordinator {
         optionNumber: leading.optionNumber,
         slotLabel: this.slotLabel(leading, plan),
         deadlineLabel: formatDeadline(deadline, plan.timezone),
-        reactions: this.supportsReactions(plan.groupId),
+        reactions: this.capabilitiesOf(plan.groupId).reactions,
       });
       await this.repo.updateMember(plan.id, m.userId, {
         remindersSent: m.remindersSent + 1,
         lastRemindedAt: now.toISOString(),
         nudgedRound: plan.round,
       });
+    }
+  }
+
+  private async tickDmPlan(plan: Plan, now: Date, deadline: Date): Promise<void> {
+    if (plan.status === "organizer_pick") {
+      if (now < deadline) return;
+      const organizer = await this.repo.getUser(plan.organizerId);
+      await this.repo.updatePlan(plan.id, { status: "failed", deadline: null });
+      await this.say(plan.groupId, {
+        kind: "pick_expired",
+        activity: plan.request.activity,
+        organizerName: organizer ? displayName(organizer) : "The organizer",
+      });
+      return;
+    }
+    if (plan.status !== "collecting") return;
+
+    const unanswered = (await this.repo.listMembers(plan.id)).filter((m) => m.statedAvailability === null && !m.timedOut);
+    if (now >= deadline) {
+      for (const m of unanswered) await this.repo.updateMember(plan.id, m.userId, { timedOut: true });
+      await this.offerTimesToOrganizer(plan);
+      return;
+    }
+    const startedAt = new Date(plan.roundStartedAt ?? plan.updatedAt);
+    for (const m of unanswered) {
+      if (reminderDue(m, startedAt, deadline, now) === null) continue;
+      const user = await this.repo.getUser(m.userId);
+      if (!user) continue;
+      await this.sayDirect(user.address, {
+        kind: "availability_reminder",
+        name: user.name,
+        activity: plan.request.activity,
+        deadlineLabel: formatDeadline(deadline, plan.timezone),
+      });
+      await this.repo.updateMember(plan.id, m.userId, { remindersSent: m.remindersSent + 1, lastRemindedAt: now.toISOString() });
     }
   }
 
@@ -661,6 +929,9 @@ export class Coordinator {
     }
   }
 }
+
+/** Whether the plan is still waiting on this member. Optional members and people who can't be reached aren't waited for. */
+const isAwaitedAnswer = (m: PlanMember) => m.role === "essential" && !m.timedOut && m.statedAvailability === null;
 
 /** The person's name, or the end of their phone number on networks that use one. */
 function displayName(user: User): string {

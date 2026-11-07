@@ -85,7 +85,7 @@ function fakeTelegram(options: { reactions: boolean; failDmsTo?: string[] }) {
       return {
         name: "telegram",
         network: "telegram",
-        capabilities: { reactions: options.reactions },
+        capabilities: { reactions: options.reactions, collectByDm: false },
         messenger,
         routes(app, onMessage) {
           app.post("/webhooks/telegram", (readJson), async (req, res) => {
@@ -134,7 +134,7 @@ async function startWith(telegram: ReturnType<typeof fakeTelegram>, calendarsEna
     now: () => new Date("2026-10-28T17:00:00Z"),
     timezone: "America/Los_Angeles",
     calendarsEnabled,
-    supportsReactions: (id) => router.supportsReactions(id),
+    capabilities: (id) => router.capabilities(id),
   });
   const onMessage: InboundHandler = withDedupe((msg) => coordinator.handleInbound(msg));
   const server = createServer({ repo, coordinator, inbound: { providers: [provider], onMessage } }).listen(0);

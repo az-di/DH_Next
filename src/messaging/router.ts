@@ -1,4 +1,4 @@
-import type { Messenger, Provider } from "./types.ts";
+import type { Capabilities, Messenger, Provider } from "./types.ts";
 
 type Routable = Pick<Provider, "network" | "messenger" | "capabilities">;
 
@@ -19,8 +19,9 @@ export class RoutingMessenger implements Messenger {
     return provider;
   }
 
-  supportsReactions(address: string): boolean {
-    return this.pick(address).capabilities.reactions;
+  /** What the network behind this address can do, or undefined if it isn't running. */
+  capabilities(address: string): Capabilities | undefined {
+    return this.providers.find((p) => address.startsWith(`${p.network}:`))?.capabilities;
   }
 
   sendGroup(groupId: string, content: string) {

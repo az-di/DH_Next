@@ -7,6 +7,8 @@ import type { CandidateSlot, PlanMember, Response, Vote } from "../types.ts";
 //                       │                    │           │              │
 //                       └──────────────▶ locked ◀────────┴──────────────┘
 //   (no viable slots at all ──▶ failed)
+//
+// Networks that plan by DM go collecting ──▶ organizer_pick ──▶ locked instead (dm-planning.ts).
 
 export const MAX_ROUNDS = 3;
 export const MAX_REMINDERS = 2;

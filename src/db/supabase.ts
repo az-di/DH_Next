@@ -81,6 +81,7 @@ const toMember = (r: Row): PlanMember => ({
   lastRemindedAt: r.last_reminded_at,
   timedOut: r.timed_out,
   nudgedRound: r.nudged_round ?? null,
+  statedAvailability: r.stated_availability ?? null,
 });
 
 const toSlot = (r: Row): CandidateSlot => ({
@@ -243,6 +244,7 @@ export class SupabaseRepo implements Repo {
       last_reminded_at: patch.lastRemindedAt,
       timed_out: patch.timedOut,
       nudged_round: patch.nudgedRound,
+      stated_availability: patch.statedAvailability,
     });
     const data = must(
       await this.db

@@ -105,6 +105,49 @@ export function renderTemplate(m: BotMessage): string {
         : `Noted, ${m.name}. None of the current options are then.`;
     case "nothing_scheduled":
       return `There's nothing scheduled right now. Start a plan with "${mention()} dinner next weekend".`;
+    case "availability_asked": {
+      let text = `On it! I'm DMing everyone to ask what times work for ${m.activity} ${m.windowLabel}. Please answer there by ${m.deadlineLabel}.`;
+      if (m.optionalNames.length) text += ` ${list(m.optionalNames)} ${m.optionalNames.length === 1 ? "is" : "are"} optional.`;
+      return text;
+    }
+    case "availability_ask": {
+      const who = m.organizerName ? `${m.organizerName} is planning ${m.activity}` : `You're planning ${m.activity}`;
+      return `Hi${m.name ? ` ${m.name}` : ""}! ${who} ${m.windowLabel}. What times work for you? Just reply here, like "Saturday after 6, not Sunday" or "anytime". Please answer by ${m.deadlineLabel}.`;
+    }
+    case "availability_saved": {
+      const saved = m.windowLabels.length
+        ? `Got it for ${m.activity}: ${m.windowLabels.join("; ")}.`
+        : `Got it, nothing works for you for ${m.activity}.`;
+      const waiting = m.waitingOn > 0 ? ` Still waiting on ${m.waitingOn} ${m.waitingOn === 1 ? "person" : "people"}.` : "";
+      return `${saved}${waiting} Reply again to change your answer.`;
+    }
+    case "availability_unclear":
+      return `I couldn't work out times for ${m.activity} from that. It's ${m.windowLabel}, so try something like "Saturday after 6" or "anytime". If nothing works, say "none".`;
+    case "availability_reminder":
+      return `Hey${m.name ? ` ${m.name}` : ""}, what times work for ${m.activity}? Just reply here by ${m.deadlineLabel}.`;
+    case "availability_which":
+      return `You're in a few plans right now: ${list(m.activities)}. Which is this for? Reply again and mention it, like "${m.activities[0]}: Saturday after 6".`;
+    case "availability_closed":
+      return `Thanks, but answers for ${m.activity} have closed and the organizer is choosing a time now.`;
+    case "dm_unreachable":
+      return `I couldn't DM ${list(m.names)}, so I'll plan without them. Check your DM settings for this server if you'd like to be included.`;
+    case "too_many_people":
+      return `This channel has ${m.count} people, and I can only DM up to ${m.max}. Try a smaller channel or thread.`;
+    case "availability_options": {
+      const lines = m.options.map((o) => {
+        const note = o.cantNames.length ? ` (${list(o.cantNames)} can't)` : m.answered > 0 ? " (works for everyone who answered)" : "";
+        return `${o.optionNumber}. ${o.label}${note}`;
+      });
+      const heard = `${m.answered} of ${m.total} answered${m.noAnswerNames.length ? `, no reply from ${list(m.noAnswerNames)}` : ""}`;
+      const ask = m.organizerName ? `${m.organizerName}, reply here with a number to pick one` : "Reply with a number to pick one";
+      return `Here's what looks best for ${m.activity} (${heard}). ${ask}:\n${lines.join("\n")}`;
+    }
+    case "organizer_picking":
+      return `I've heard from ${m.answered} of ${m.total} about ${m.activity}, and ${m.organizerName} is picking the time now.`;
+    case "pick_invalid":
+      return `For ${m.activity}, reply with a number from 1 to ${m.optionCount} to pick a time.`;
+    case "pick_expired":
+      return `${m.organizerName} didn't pick a time for ${m.activity}, so I've closed this plan. Mention me to start again.`;
     case "organizer_only":
       return `Only ${m.organizerName}, who started this plan, can change who's required.`;
   }

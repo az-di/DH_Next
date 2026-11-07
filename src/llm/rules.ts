@@ -1,3 +1,6 @@
+import { invertWindows } from "../plans/dm-planning.ts";
+import type { TimeWindow } from "../types.ts";
+import type { AvailabilityContext, AvailabilityReading } from "./brain.ts";
 import type { ParsedRequest } from "../types.ts";
 import { localParts, startOfLocalDay, zonedTimeToUtc } from "../time.ts";
 
@@ -170,6 +173,50 @@ const KNOWN_REQUEST_WORDS = new Set(
 export function requestFullyUnderstood(text: string): boolean {
   const words = text.toLowerCase().replace(/[’]/g, "'").replace(/[.,!?;:]/g, " ").split(/\s+/).filter(Boolean);
   return words.length > 0 && words.every((w) => KNOWN_REQUEST_WORDS.has(w) || /^\d{1,2}(:\d{2})?(am|pm)?(ish)?$/.test(w));
+}
+
+const NOTHING_WORKS =
+  /^(i )?(none|no|nope|nothing( works)?|no times?( work)?|can't|cant|cannot|can't (make it|come|do it)|cant (make it|come|do it)|cannot (make it|come)|not coming)[.!]*$/;
+const ANY_TIME = /\b(any ?time|any day|whenever|flexible|all work|all good|free all)\b/;
+
+/**
+ * Rule-based reading of "what times work for you?", used when Claude isn't
+ * available. Handles one idea per reply and says "unclear" rather than guess at
+ * something like "Saturday after 6, but not Sunday".
+ */
+export function parseAvailabilityWithRules(text: string, context: AvailabilityContext): AvailabilityReading {
+  const { now, timezone, window, activity } = context;
+  // "dinner: saturday" names the plan as well as the time, so only the time is left to read.
+  const t = text.toLowerCase().replace(/[’]/g, "'").replace(activity.toLowerCase(), "").replace(/^[\s:,-]+/, "").trim();
+  if (NOTHING_WORKS.test(t)) return { kind: "none" };
+  if (ANY_TIME.test(t)) return { kind: "windows", windows: [window] };
+  if (/,|\bbut\b|\bexcept\b/.test(t)) return { kind: "unclear" };
+
+  // "not Sunday" and "Sunday" name the same days, so the constraint parser finds both.
+  const negative = ONE_OFF_NEGATIVE.test(t) || /\b(not|no)\b/.test(t);
+  // A bare day name means that day within the plan, so read it from the plan's start.
+  // "Today" and "tomorrow" still mean what they say.
+  const from = /\b(today|tonight|tomorrow)\b/.test(t) ? now : new Date(Math.max(now.getTime(), Date.parse(window.start)));
+  const named = parseConstraintWithRules(`can't ${t}`, { now: from, timezone });
+  if (!named) return { kind: "unclear" };
+  if (negative) return { kind: "windows", windows: invertWindows(named, window) };
+  return { kind: "windows", windows: named.map((w) => applyHourLimits(w, t, timezone)) };
+}
+
+/** Narrows a day to "after 6" or "before 3". A bare hour under 12 reads as PM unless it says AM. */
+function applyHourLimits(day: TimeWindow, t: string, timezone: string): TimeWindow {
+  const atHour = (hourText: string, meridiem: string | undefined) => {
+    let hour = Number(hourText) % 12;
+    if (meridiem !== "am") hour += 12;
+    const d = localParts(new Date(day.start), timezone);
+    return zonedTimeToUtc(d.year, d.month, d.day, hour, timezone).toISOString();
+  };
+  const after = /\b(?:after|from)\s+(\d{1,2})\s*(am|pm)?\b/.exec(t);
+  const before = /\b(?:before|until|till)\s+(\d{1,2})\s*(am|pm)?\b/.exec(t);
+  return {
+    start: after ? atHour(after[1], after[2]) : day.start,
+    end: before ? atHour(before[1], before[2]) : day.end,
+  };
 }
 
 const ONE_OFF_NEGATIVE =

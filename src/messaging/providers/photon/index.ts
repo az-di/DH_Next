@@ -188,7 +188,7 @@ async function connect(): Promise<Provider> {
   return {
     name: "photon",
     network: "imessage",
-    capabilities: { reactions: true },
+    capabilities: { reactions: true, collectByDm: false },
     messenger,
     routes(server, onMessage) {
       if (photonConfig.inbound !== "webhook") return;

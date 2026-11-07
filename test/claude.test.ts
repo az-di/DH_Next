@@ -84,7 +84,7 @@ test("one Claude call when the rules aren't sure, mapped by kind", async () => {
     const { brain, calls } = fakeClient(output);
     assert.deepEqual(await brain.interpret(text, opts), expected, text);
     assert.equal(calls.parse.length, 1, text);
-    assert.equal(calls.parse[0].model, "claude-opus-5-5");
+    assert.equal(calls.parse[0].model, "claude-sonnet-5-5");
     assert.equal(calls.parse[0].output_config.effort, "low");
   }
 });

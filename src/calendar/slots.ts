@@ -13,6 +13,8 @@ export interface ScoredSlot {
   /** Members with calendars who are free / busy for this slot. */
   freeCount: number;
   busyUserIds: string[];
+  /** Everyone with a known conflict: calendar busy, or a time they said never works. */
+  conflictUserIds: string[];
 }
 
 export interface FindSlotsInput {
@@ -27,6 +29,11 @@ export interface FindSlotsInput {
   /** Manual preferences by member. "Never" times count as busy; preferred times nudge the score. */
   preferences?: Map<string, Preferences>;
   stepMinutes?: number;
+  /**
+   * Consider any reasonable hour, not just the activity's usual ones. For when
+   * people have said what works: a 2 PM "dinner" that suits everyone beats none.
+   */
+  anyReasonableHour?: boolean;
 }
 
 const EARLIEST_REASONABLE_HOUR = 8;
@@ -114,7 +121,7 @@ export function scoreSlots(input: FindSlotsInput): ScoredSlot[] {
     const unreasonable = startHour < EARLIEST_REASONABLE_HOUR || endHour > LATEST_REASONABLE_END_HOUR;
     if (unreasonable && !request.timeRequested) continue;
     // Out-of-hours slots are dropped, not down-ranked: no 8 AM "dinner" in a later round.
-    if (startHour < hours.from || endHour > hours.to) continue;
+    if (!input.anyReasonableHour && (startHour < hours.from || endHour > hours.to)) continue;
     if (input.exclude?.some((x) => overlaps(x, slot))) continue;
 
     const busyUserIds = connected.filter(([, blocks]) => isBusy(blocks, slot)).map(([id]) => id);
@@ -140,6 +147,7 @@ export function scoreSlots(input: FindSlotsInput): ScoredSlot[] {
         PREFERENCE_WEIGHT * groupFit(input.preferences, roles, slot.start, timezone),
       freeCount: connected.length - busyUserIds.length,
       busyUserIds,
+      conflictUserIds: [...busyUserIds, ...neverUserIds],
     });
   }
   return results.sort((a, b) => b.score - a.score || a.start.getTime() - b.start.getTime());

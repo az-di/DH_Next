@@ -72,7 +72,7 @@ export const sendblueProvider: ProviderDefinition = {
     return {
       name: "sendblue",
       network: "imessage",
-      capabilities: { reactions: true },
+      capabilities: { reactions: true, collectByDm: false },
       messenger: new SendblueMessenger(),
       routes(app, onMessage) {
         mountSendblueWebhook(app, onMessage);

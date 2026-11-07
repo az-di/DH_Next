@@ -158,7 +158,7 @@ async function connect(): Promise<Provider> {
   return {
     name: "discord",
     network: "discord",
-    capabilities: { reactions: true },
+    capabilities: { reactions: true, collectByDm: true },
     messenger: new DiscordMessenger(client),
     async start(onMessage) {
       console.log(`[discord] connected as ${client.user!.tag}`);

@@ -35,7 +35,7 @@ export const consoleProvider: ProviderDefinition = {
     return {
       name: "console",
       network: "imessage",
-      capabilities: { reactions: true },
+      capabilities: { reactions: true, collectByDm: false },
       messenger: new ConsoleMessenger(),
       routes: mountSendblueWebhook,
     };
