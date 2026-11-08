@@ -44,6 +44,8 @@ export interface ParsedRequest {
 export interface Plan {
   id: string;
   groupId: string; // network-prefixed group chat id
+  /** The chat's display name, like "#friends", when the network has one. */
+  groupName: string | null;
   organizerId: string;
   status: PlanStatus;
   round: number; // 1..MAX_ROUNDS

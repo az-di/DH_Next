@@ -284,7 +284,8 @@ export class ClaudeBrain implements Brain {
       message.kind === "role_question" ||
       message.kind === "preferences_saved" ||
       message.kind === "availability_options" ||
-      message.kind === "availability_saved"
+      message.kind === "availability_saved" ||
+      message.kind === "availability_which"
     ) {
       return draft;
     }

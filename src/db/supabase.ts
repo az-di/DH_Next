@@ -44,6 +44,7 @@ const toPreferences = (r: Row): Preferences => ({
 const toPlan = (r: Row): Plan => ({
   id: r.id,
   groupId: r.group_id,
+  groupName: r.group_name ?? null,
   organizerId: r.organizer_id,
   status: r.status,
   round: r.round,
@@ -61,6 +62,7 @@ const toPlan = (r: Row): Plan => ({
 const fromPlan = (p: Partial<Plan>): Row =>
   dropUndefined({
     group_id: p.groupId,
+    group_name: p.groupName,
     organizer_id: p.organizerId,
     status: p.status,
     round: p.round,
@@ -226,6 +228,13 @@ export class SupabaseRepo implements Repo {
     return (data as Row[]).map(toPlan);
   }
 
+  async listPlansForUser(userId: string) {
+    const memberships = must(await this.db.from("plan_members").select("plan_id").eq("user_id", userId)) as Row[];
+    if (memberships.length === 0) return [];
+    const data = must(await this.db.from("plans").select().in("id", memberships.map((m) => m.plan_id)));
+    return (data as Row[]).map(toPlan);
+  }
+
   async addMember(planId: string, userId: string, role: MemberRole = "essential") {
     const data = must(
       await this.db
@@ -316,5 +325,14 @@ export class SupabaseRepo implements Repo {
       await this.db.from("proposal_messages").select().eq("message_id", messageId).maybeSingle(),
     );
     return data ? { planId: (data as Row).plan_id, slotId: (data as Row).slot_id } : null;
+  }
+
+  async linkPlanMessage(messageId: string, planId: string) {
+    must(await this.db.from("plan_dm_messages").upsert({ message_id: messageId, plan_id: planId }));
+  }
+
+  async getPlanIdForMessage(messageId: string) {
+    const data = must(await this.db.from("plan_dm_messages").select("plan_id").eq("message_id", messageId).maybeSingle());
+    return data ? ((data as Row).plan_id as string) : null;
   }
 }

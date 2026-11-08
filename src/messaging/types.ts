@@ -20,10 +20,13 @@ export interface InboundMessage {
   /** The bot's own address on this network, so it isn't added to plans as a member. */
   botAddress: string | null;
   groupId: string | null;
+  /** The group's display name, like "#friends", when the network has one. Tells same-named plans apart in DMs. */
+  groupName?: string | null;
   participants: string[];
   /** Display names by address, when the network provides them. Used until someone introduces themselves. */
   names?: Record<string, string>;
   text: string;
+  /** The message this one replies to. In a DM, a reply to the bot says exactly which plan it's about. */
   replyToHandle: string | null;
   reaction: InboundReaction | null;
   isOutbound: boolean;

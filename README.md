@@ -170,6 +170,18 @@ channel joins the plan. Discord plans by DM instead of voting in the channel:
 3. Set `BOT_NAME` to what people call the bot. Run `npm run dev`, then in a channel
    send `@YourBot dinner next weekend`.
 
+Someone can be in plans from several channels at once, and a DM doesn't say which
+one it's about. In order:
+
+1. Using Discord's **Reply** on one of the bot's DMs about a plan goes to that plan.
+2. A reply that names a plan, like "dinner: Saturday", goes to that plan. If that
+   plan has closed, the bot says so and doesn't save it to another one.
+3. With one plan collecting answers, a reply goes there. With several, it goes to the
+   only one they haven't answered, and the confirmation says how to correct it.
+4. Otherwise the bot asks, listing the plans by number with their channel and
+   organizer, and uses what they already said once they choose. A bare number that
+   could be a pick or an answer also asks, so it can't lock in a time by accident.
+
 If someone blocks DMs from server members, the bot names them in the channel and
 plans without them. If that's the organizer, they pick in the channel instead, and
 the options there don't show who can't make each one.
@@ -219,6 +231,8 @@ assumptions about them:
   get a calendar link or reminders.
 - **Do reactions reach the bot?** If not, set `capabilities.reactions` to `false`.
 - **Vote in the group, or plan by DM?** `capabilities.collectByDm` picks the flow.
+  For DMs, set `replyToHandle` on replies and `groupName` on group messages if the
+  network has them. Both tell someone's plans apart, and neither is required.
 - **Are there sending limits?** Reminders go out on a timer, long after the last
   message from that person.
 

@@ -9,6 +9,8 @@ import { ConsoleMessenger } from "../src/messaging/providers/console/index.ts";
 import type { InboundMessage } from "../src/messaging/types.ts";
 import { Coordinator } from "../src/plans/coordinator.ts";
 import { clipWindows, collectionDeadline, describeWindow, invertWindows, MAX_DM_MEMBERS } from "../src/plans/dm-planning.ts";
+import { findNamed, readNumber, routeDirect, type DmPlan } from "../src/plans/dm-routing.ts";
+import type { Plan } from "../src/types.ts";
 
 const TZ = "America/Los_Angeles";
 const HOUR = 3_600_000;
@@ -62,8 +64,23 @@ function setup({ blocked = [] as string[], people = [MAYA, SAM, THEO] } = {}) {
     messenger,
     coordinator,
     post: (from: string, text: string, group = GROUP) => coordinator.handleInbound(inbound(from, text, group)),
-    dm: (from: string, text: string) => coordinator.handleInbound(inbound(from, text, null)),
+    /** Posts in a channel with a display name, like Discord does. */
+    postIn: (from: string, text: string, group: string, groupName: string) =>
+      coordinator.handleInbound({ ...inbound(from, text, group), groupName }),
+    /** A DM, optionally using Discord's Reply on one of the bot's messages. */
+    dm: (from: string, text: string, replyTo: string | null = null) =>
+      coordinator.handleInbound({ ...inbound(from, text, null), replyToHandle: replyTo }),
     plan: () => [...repo.plans.values()].at(-1)!,
+    planIn: (group: string) => [...repo.plans.values()].filter((p) => p.groupId === group).at(-1)!,
+    /** The answer a person gave for the plan in this channel. */
+    answer: (group: string, address: string) => {
+      const planId = [...repo.plans.values()].filter((p) => p.groupId === group).at(-1)!.id;
+      const userId = [...repo.users.values()].find((u) => u.address === address)!.id;
+      return repo.members.find((m) => m.planId === planId && m.userId === userId)!.statedAvailability;
+    },
+    /** Handle of the latest DM to this person that matches, for replying to it. */
+    handleOf: (address: string, pattern: RegExp) =>
+      messenger.outbox.filter((m) => m.to === address && pattern.test(m.content)).at(-1)!.messageHandle,
     to: (address: string) => messenger.outbox.filter((m) => m.to === address).map((m) => m.content),
     last: (address: string) => messenger.outbox.filter((m) => m.to === address).at(-1)?.content ?? "",
     advance: (ms: number) => (now = new Date(now.getTime() + ms)),
@@ -238,17 +255,251 @@ test("late answers are turned away, and an organizer who never picks frees the c
   assert.equal(plan().status, "collecting", "the channel can plan again");
 });
 
+const CH2 = "discord:channel:2";
+
 test("someone in two open plans is asked which one, and naming it works", async () => {
-  const { post, dm, repo, last } = setup({ people: [MAYA, SAM] });
+  const { post, dm, answer, last } = setup({ people: [MAYA, SAM] });
   await post(MAYA, "@planner hangout next weekend");
-  await post(MAYA, "@planner dinner next weekend", "discord:channel:2");
+  await post(MAYA, "@planner dinner next weekend", CH2);
 
   await dm(SAM, "saturday");
-  assert.match(last(SAM), /in a few plans.*hangout and dinner/);
-  assert.equal(repo.members.find((m) => m.statedAvailability !== null), undefined);
+  assert.match(last(SAM), /Which did you mean\?.*\n1\. hangout .*\n2\. dinner /);
+  assert.equal(answer(GROUP, SAM), null);
+  assert.equal(answer(CH2, SAM), null);
 
   await dm(SAM, "dinner: saturday");
   assert.match(last(SAM), /Got it for dinner/);
+  assert.equal(answer(GROUP, SAM), null);
+});
+
+test("answering 'which one?' by number keeps what they said", async () => {
+  const { post, dm, answer, last } = setup({ people: [MAYA, SAM] });
+  await post(MAYA, "@planner hangout next weekend");
+  await post(MAYA, "@planner dinner next weekend", CH2);
+
+  await dm(SAM, "saturday");
+  await dm(SAM, "7");
+  assert.match(last(SAM), /Which did you mean/, "an out-of-range number asks again");
+  await dm(SAM, "2");
+  assert.match(last(SAM), /Got it for dinner: Sat/);
+  assert.equal(answer(GROUP, SAM), null);
+  assert.equal(answer(CH2, SAM)?.length, 1);
+});
+
+test("two plans with the same name can be told apart", async () => {
+  const { postIn, dm, answer, last } = setup({ people: [MAYA, SAM] });
+  await postIn(MAYA, "@planner dinner next weekend", GROUP, "#friends");
+  await postIn(THEO, "@planner dinner next weekend", CH2, "#work");
+
+  await dm(SAM, "dinner: saturday");
+  const question = last(SAM);
+  assert.match(question, /1\. dinner in #friends \(organized by Maya, /);
+  assert.match(question, /2\. dinner in #work \(organized by /);
+  assert.equal(answer(GROUP, SAM), null);
+
+  await dm(SAM, "2");
+  assert.match(last(SAM), /Got it for dinner in #work: Sat/);
+  assert.equal(answer(GROUP, SAM), null);
+  assert.equal(answer(CH2, SAM)?.length, 1);
+});
+
+test("a longer plan name doesn't also count as the shorter one", async () => {
+  const { post, dm, planIn, answer, last } = setup({ people: [MAYA, SAM] });
+  await post(MAYA, "@planner dinner next weekend");
+  await post(MAYA, "@planner dinner next weekend", CH2);
+  planIn(CH2).request.activity = "dinner party"; // the offline parser only reads one word
+
+  await dm(SAM, "dinner party: saturday");
+  assert.match(last(SAM), /Got it for dinner party/);
+  assert.equal(answer(GROUP, SAM), null);
+});
+
+test("a reply naming a closed plan isn't saved to the plan still open", async () => {
+  const { post, dm, plan, planIn, answer, last, advance, coordinator } = setup({ people: [MAYA, SAM] });
+  await post(MAYA, "@planner dinner next weekend");
+  await dm(MAYA, "saturday");
+  advance(25 * HOUR);
+  await coordinator.tick();
+  assert.equal(plan().status, "organizer_pick");
+  await post(MAYA, "@planner hangout next weekend", CH2);
+
+  await dm(SAM, "dinner: saturday");
+  assert.match(last(SAM), /answers for dinner have closed.*If this was for hangout, say so by name/);
+  assert.equal(answer(CH2, SAM), null);
+
+  await dm(SAM, "hangout: saturday");
+  assert.match(last(SAM), /Got it for hangout/);
+  assert.equal(planIn(GROUP).status, "organizer_pick");
+});
+
+test("a reply naming a finished plan is told so", async () => {
+  const { post, dm, plan, answer, last } = setup({ people: [MAYA, SAM] });
+  await post(MAYA, "@planner dinner next weekend");
+  await dm(MAYA, "saturday");
+  await dm(SAM, "saturday");
+  await dm(MAYA, "1");
+  assert.equal(plan().status, "locked");
+  await post(MAYA, "@planner hangout next weekend", CH2);
+
+  await dm(SAM, "dinner: sunday instead");
+  assert.match(last(SAM), /dinner is already finished.*If this was for hangout/);
+  assert.equal(answer(CH2, SAM), null);
+});
+
+/** Maya is choosing a time for dinner in channel 1, and Sam has invited her to a hangout in channel 2. */
+async function pickingAndInvited() {
+  const context = setup({ people: [MAYA, SAM] });
+  await context.post(MAYA, "@planner dinner next weekend");
+  await context.dm(MAYA, "saturday");
+  await context.dm(SAM, "saturday");
+  assert.equal(context.planIn(GROUP).status, "organizer_pick");
+  await context.post(SAM, "@planner hangout next weekend", CH2);
+  return context;
+}
+
+test("a number that could be a pick or a time asks first, and locks nothing", async () => {
+  const { dm, planIn, last } = await pickingAndInvited();
+  await dm(MAYA, "1");
+  assert.equal(planIn(GROUP).status, "organizer_pick");
+  assert.match(last(MAYA), /1\. Pick Sat, Nov 7.* for dinner \(organized by you, /);
+  assert.match(last(MAYA), /2\. Use "1" as your answer for hangout \(organized by Sam, /);
+
+  await dm(MAYA, "2");
+  assert.equal(planIn(GROUP).status, "organizer_pick", "chose to answer the hangout instead");
+});
+
+test("choosing the pick from that question locks it in", async () => {
+  const { dm, planIn } = await pickingAndInvited();
+  await dm(MAYA, "1");
+  await dm(MAYA, "1");
+  assert.equal(planIn(GROUP).status, "locked");
+});
+
+test("words still go to the plan collecting answers while the organizer is choosing elsewhere", async () => {
+  const { dm, planIn, answer, last } = await pickingAndInvited();
+  await dm(MAYA, "sunday");
+  assert.match(last(MAYA), /Got it for hangout: Sun/);
+  assert.equal(planIn(GROUP).status, "organizer_pick");
+  assert.equal(answer(CH2, MAYA)?.length, 1);
+});
+
+test("an organizer choosing for two plans is asked which, and neither is skipped", async () => {
+  const { post, dm, planIn, last } = setup({ people: [MAYA, SAM] });
+  await post(MAYA, "@planner dinner next weekend");
+  await dm(MAYA, "saturday");
+  await dm(SAM, "saturday");
+  await post(MAYA, "@planner hangout next weekend", CH2);
+  await dm(MAYA, "hangout: saturday");
+  await dm(SAM, "hangout: saturday");
+  assert.equal(planIn(CH2).status, "organizer_pick");
+
+  await dm(MAYA, "1");
+  assert.match(last(MAYA), /1\. Pick .* for dinner.*\n2\. Pick .* for hangout/);
+  await dm(MAYA, "1");
+  assert.equal(planIn(GROUP).status, "locked");
+  assert.equal(planIn(CH2).status, "organizer_pick");
+
+  await dm(MAYA, "hangout 1");
+  assert.equal(planIn(CH2).status, "locked");
+});
+
+test("a stale choice can't lock in a plan that has moved on", async () => {
+  const { post, dm, planIn, last, advance, coordinator } = setup({ people: [MAYA, SAM] });
+  await post(MAYA, "@planner dinner next weekend");
+  await dm(MAYA, "saturday");
+  await dm(SAM, "saturday");
+  advance(23 * HOUR);
+  await post(SAM, "@planner hangout next weekend", CH2);
+  await dm(MAYA, "1"); // asks: pick dinner, or answer the hangout?
+
+  advance(2 * HOUR); // the pick deadline passes, while the question can still be answered
+  await coordinator.tick();
+  assert.equal(planIn(GROUP).status, "failed");
+  await dm(MAYA, "1");
+  assert.equal(planIn(GROUP).status, "failed");
+  assert.match(last(MAYA), /dinner is already finished/);
+});
+
+test("an old 'which one?' question expires", async () => {
+  const { post, dm, answer, last, advance } = setup({ people: [MAYA, SAM] });
+  await post(MAYA, "@planner hangout next weekend");
+  await post(MAYA, "@planner dinner next weekend", CH2);
+  await dm(SAM, "saturday");
+  advance(25 * HOUR);
+  await dm(SAM, "2");
+  assert.match(last(SAM), /Which did you mean/);
+  assert.equal(answer(CH2, SAM), null);
+});
+
+test("a word reply goes to the only plan they haven't answered, and says how to correct it", async () => {
+  const { post, dm, answer, last } = setup({ people: [MAYA, SAM, THEO] });
+  await post(MAYA, "@planner dinner next weekend");
+  await dm(SAM, "saturday"); // the only plan so far
+  await post(MAYA, "@planner hangout next weekend", CH2);
+
+  await dm(SAM, "sunday");
+  assert.match(last(SAM), /Got it for hangout: Sun.*If you meant dinner, say so by name, like "dinner: Saturday after 6"/);
+  assert.equal(answer(CH2, SAM)?.length, 1);
+
+  await dm(SAM, "saturday");
+  assert.match(last(SAM), /Which did you mean/, "both answered now, so it could be a change to either");
+});
+
+test("replying to the bot's invite goes to that plan, with no question", async () => {
+  const { post, dm, answer, last, handleOf } = setup({ people: [MAYA, SAM] });
+  await post(MAYA, "@planner hangout next weekend");
+  await post(MAYA, "@planner dinner next weekend", CH2);
+
+  await dm(SAM, "saturday", handleOf(SAM, /planning hangout/));
+  assert.match(last(SAM), /Got it for hangout: Sat/);
+  assert.equal(answer(CH2, SAM), null);
+
+  await dm(SAM, "sunday", handleOf(SAM, /Got it for hangout/));
+  assert.match(last(SAM), /Got it for hangout: Sun/, "replying to a confirmation works too");
+});
+
+test("replying to the options picks for that plan, and a number there is never a time", async () => {
+  const { dm, planIn, handleOf, last } = await pickingAndInvited();
+  const options = handleOf(MAYA, /Here's what looks best/);
+  await dm(MAYA, "saturday please", options);
+  assert.match(last(MAYA), /For dinner, reply with a number/);
+  await dm(MAYA, "1", options);
+  assert.equal(planIn(GROUP).status, "locked");
+});
+
+test("a number replied to an invite is an answer, even while choosing elsewhere", async () => {
+  const { dm, planIn, handleOf, last } = await pickingAndInvited();
+  await dm(MAYA, "1", handleOf(MAYA, /planning hangout/));
+  assert.equal(planIn(GROUP).status, "organizer_pick");
+  assert.match(last(MAYA), /couldn't work out times for hangout/);
+});
+
+test("replying to a message about a finished plan doesn't touch other plans", async () => {
+  const { post, dm, plan, answer, last, handleOf } = setup({ people: [MAYA, SAM] });
+  await post(MAYA, "@planner dinner next weekend");
+  const invite = handleOf(SAM, /planning dinner/);
+  await dm(MAYA, "saturday");
+  await dm(SAM, "saturday");
+  await dm(MAYA, "1");
+  assert.equal(plan().status, "locked");
+  await post(MAYA, "@planner hangout next weekend", CH2);
+
+  await dm(SAM, "actually sunday", invite);
+  assert.match(last(SAM), /dinner is already finished/);
+  assert.equal(answer(CH2, SAM), null);
+});
+
+test("a reply to a message the bot doesn't recognize falls back to the usual rules", async () => {
+  const { post, dm, last } = setup({ people: [MAYA, SAM] });
+  await post(MAYA, "@planner hangout next weekend");
+  await dm(SAM, "saturday", "unknown-message");
+  assert.match(last(SAM), /Got it for hangout: Sat/);
+});
+
+test("the invite says which channel the plan is in", async () => {
+  const { postIn, last } = setup({ people: [MAYA, SAM] });
+  await postIn(MAYA, "@planner dinner next weekend", GROUP, "#friends");
+  assert.match(last(SAM), /Maya is planning dinner in #friends/);
 });
 
 test("a channel over the DM cap is refused, with no plan and no DMs", async () => {
@@ -294,6 +545,45 @@ test("networks without the capability keep voting in the group", async () => {
 });
 
 // ── Pure pieces ──────────────────────────────────────────────────────────
+
+const dmPlan = (activity: string, status: Plan["status"] = "collecting", extra: Partial<DmPlan> = {}): DmPlan => ({
+  plan: { id: activity, status, createdAt: "2026-10-28", request: { activity } } as unknown as Plan,
+  isOrganizer: false,
+  answered: false,
+  optionCount: 0,
+  ...extra,
+});
+
+test("numbers are read only when that's all the message says", () => {
+  for (const [text, number] of [["2", 2], [" 2. ", 2], ["#2", 2], ["option 2", 2], ["2)", 2], [": 2", 2]] as const) {
+    assert.equal(readNumber(text), number, text);
+  }
+  for (const text of ["2 pm", "2pm", "after 2", "the 2nd", "", "saturday"]) assert.equal(readNumber(text), null, text);
+});
+
+test("plan names match whole words, ignoring case", () => {
+  const names = (text: string, plans: DmPlan[]) => findNamed(text, plans).named.map((p) => p.plan.request.activity);
+  assert.deepEqual(names("Brunch on saturday", [dmPlan("run")]), []);
+  assert.deepEqual(names("the RUN, saturday", [dmPlan("run")]), ["run"]);
+  assert.deepEqual(names("c++ night saturday", [dmPlan("c++ night")]), ["c++ night"], "symbols in names are literal");
+  assert.deepEqual(names("dinner party and dinner", [dmPlan("dinner"), dmPlan("dinner party")]), ["dinner", "dinner party"]);
+});
+
+test("routing with nothing to go on", () => {
+  assert.deepEqual(routeDirect("hello", []), { kind: "none" });
+  assert.deepEqual(routeDirect("hello", [dmPlan("dinner", "locked")]), { kind: "none" });
+  assert.deepEqual(routeDirect("3", [dmPlan("dinner", "locked")]), { kind: "none" });
+});
+
+test("a pick out of range is corrected, not treated as a pick", () => {
+  const route = routeDirect("9", [dmPlan("dinner", "organizer_pick", { isOrganizer: true, optionCount: 3 })]);
+  assert.equal(route.kind, "pick_invalid");
+});
+
+test("only the organizer's plan counts as theirs to pick", () => {
+  const route = routeDirect("1", [dmPlan("dinner", "organizer_pick", { optionCount: 0 })]);
+  assert.equal(route.kind, "closed");
+});
 
 const window = { start: "2026-11-07T08:00:00.000Z", end: "2026-11-09T08:00:00.000Z" }; // Sat + Sun PST
 const ctx = { now: new Date("2026-10-28T17:00:00Z"), timezone: TZ, activity: "dinner", window };

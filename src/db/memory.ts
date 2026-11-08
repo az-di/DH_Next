@@ -25,6 +25,7 @@ export class MemoryRepo implements Repo {
   slots: CandidateSlot[] = [];
   responses: Response[] = [];
   proposalMessages = new Map<string, { planId: string; slotId: string }>();
+  planMessages = new Map<string, string>();
 
   async upsertUserByAddress(address: string, patch: Partial<Pick<User, "name" | "timezone">> = {}) {
     const existing = [...this.users.values()].find((u) => u.address === address);
@@ -101,6 +102,11 @@ export class MemoryRepo implements Repo {
     );
   }
 
+  async listPlansForUser(userId: string) {
+    const planIds = new Set(this.members.filter((m) => m.userId === userId).map((m) => m.planId));
+    return [...this.plans.values()].filter((p) => planIds.has(p.id));
+  }
+
   async addMember(planId: string, userId: string, role: MemberRole = "essential") {
     const existing = this.members.find((m) => m.planId === planId && m.userId === userId);
     if (existing) return existing;
@@ -163,6 +169,14 @@ export class MemoryRepo implements Repo {
 
   async getProposalMessage(messageId: string) {
     return this.proposalMessages.get(messageId) ?? null;
+  }
+
+  async linkPlanMessage(messageId: string, planId: string) {
+    this.planMessages.set(messageId, planId);
+  }
+
+  async getPlanIdForMessage(messageId: string) {
+    return this.planMessages.get(messageId) ?? null;
   }
 }
 

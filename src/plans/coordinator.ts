@@ -9,6 +9,7 @@ import type { Capabilities, InboundMessage, Messenger } from "../messaging/types
 import { isMentioned, stripMention } from "../messaging/mentions.ts";
 import { parseVotes, type ParsedVote } from "../messaging/votes.ts";
 import { formatDeadline, formatSlot } from "../time.ts";
+import { OPEN_STATUSES } from "../types.ts";
 import type {
   CandidateSlot,
   MemberRole,
@@ -30,6 +31,7 @@ import {
   MAX_DM_OPTIONS,
   ORGANIZER_PICK_MS,
 } from "./dm-planning.ts";
+import { readNumber, routeDirect, routeReply, type DmChoice, type DmPlan, type DmRoute } from "./dm-routing.ts";
 import { KeyedLock } from "./lock.ts";
 import { mergePreferences, describeUpdate } from "./preferences.ts";
 import { isSelf, parseNameIntro, resolveName, type RoleStatement } from "./roles.ts";
@@ -59,6 +61,9 @@ export interface CoordinatorDeps {
 
 const DEFAULT_CAPABILITIES: Capabilities = { reactions: true, collectByDm: false };
 
+/** How long a "which plan did you mean?" question can still be answered by number. */
+const PENDING_CHOICE_MS = 24 * 60 * 60 * 1000;
+
 /**
  * The central coordinator. Each member's "agent" is their profile and
  * calendar on the server; this class negotiates for all of them, which is
@@ -74,6 +79,11 @@ export class Coordinator {
   private loadAvailability: typeof loadAvailability;
   private capabilitiesOf: (groupId: string) => Capabilities;
   private lock = new KeyedLock();
+  /**
+   * "Which plan did you mean?" questions awaiting a number, by user id. Held in memory
+   * so a DM's text is never stored; after a restart the bot just asks again.
+   */
+  private pendingChoices = new Map<string, { text: string; choices: DmChoice[]; expiresAt: number }>();
 
   constructor(deps: CoordinatorDeps) {
     this.repo = deps.repo;
@@ -155,6 +165,7 @@ export class Coordinator {
 
     const plan = await this.repo.createPlan({
       groupId,
+      groupName: msg.groupName ?? null,
       organizerId: organizer.id,
       status: "collecting",
       round: 1,
@@ -242,11 +253,12 @@ export class Coordinator {
     for (const member of await this.repo.listMembers(plan.id)) {
       const user = await this.repo.getUser(member.userId);
       if (!user) continue;
-      const sent = await this.sayDirect(user.address, {
+      const sent = await this.sayAboutPlan(plan, user.address, {
         kind: "availability_ask",
         name: user.name,
         organizerName: user.id === plan.organizerId || !organizer ? null : displayName(organizer),
         activity,
+        groupName: plan.groupName,
         windowLabel: label,
         deadlineLabel,
       });
@@ -264,45 +276,122 @@ export class Coordinator {
     const sender = await this.repo.upsertUserByAddress(msg.from);
     const text = stripMention(msg.text);
 
-    const plans: Plan[] = [];
-    for (const plan of await this.repo.listOpenPlans()) {
-      if (!this.capabilitiesOf(plan.groupId).collectByDm) continue;
-      if ((await this.repo.listMembers(plan.id)).some((m) => m.userId === sender.id)) plans.push(plan);
-    }
-    const picking = plans.filter((p) => p.status === "organizer_pick" && p.organizerId === sender.id);
-    const collecting = plans.filter((p) => p.status === "collecting");
+    // Anything but a number moves on from an earlier "which plan?" question.
+    const pending = this.pendingChoices.get(sender.id);
+    this.pendingChoices.delete(sender.id);
 
-    if (picking.length && /^\s*\d+\s*$/.test(text)) {
-      const plan = picking.at(-1)!;
-      await this.lock.run(plan.groupId, () => this.handleOrganizerPick(plan, sender, text));
+    // A reply to one of the bot's messages says exactly which plan it's about.
+    const replied = msg.replyToHandle ? await this.planRepliedTo(msg.replyToHandle, sender) : null;
+    if (replied) {
+      await this.followRoute(routeReply(text, replied), sender, text);
       return;
     }
-    if (collecting.length) {
-      const named = collecting.filter((p) => text.toLowerCase().includes(p.request.activity.toLowerCase()));
-      const plan = collecting.length === 1 ? collecting[0] : named.length === 1 ? named[0] : null;
-      if (plan) await this.lock.run(plan.groupId, () => this.saveAvailability(plan.id, sender, text));
-      else await this.sayDirect(sender.address, { kind: "availability_which", activities: collecting.map((p) => p.request.activity) });
+
+    const number = readNumber(text);
+    if (pending && number !== null && pending.expiresAt > this.now().getTime()) {
+      const choice = pending.choices[number - 1];
+      if (choice) await this.followRoute(choice, sender, pending.text);
+      else await this.askWhichPlan(pending.choices, sender, pending.text);
       return;
     }
-    if (picking.length) {
-      const plan = picking.at(-1)!;
-      const optionCount = (await this.repo.listSlots(plan.id, plan.round)).length;
-      await this.sayDirect(sender.address, { kind: "pick_invalid", activity: plan.request.activity, optionCount });
-      return;
-    }
-    if (plans.length) {
-      await this.sayDirect(sender.address, { kind: "availability_closed", activity: plans.at(-1)!.request.activity });
-      return;
-    }
-    await this.sayDirect(sender.address, { kind: "dm_help" });
+
+    await this.followRoute(routeDirect(text, await this.dmPlansFor(sender)), sender, text);
   }
 
-  private async saveAvailability(planId: string, sender: User, text: string): Promise<void> {
+  /** Their plans that are planned by DM: open ones, plus finished ones whose dates haven't passed, which they might still mention. */
+  private async dmPlansFor(sender: User): Promise<DmPlan[]> {
+    const now = this.now().getTime();
+    const plans = (await this.repo.listPlansForUser(sender.id)).filter(
+      (p) =>
+        this.capabilitiesOf(p.groupId).collectByDm &&
+        (OPEN_STATUSES.includes(p.status) || Date.parse(p.request.windowEnd) > now),
+    );
+    const views = await Promise.all(plans.map((p) => this.dmPlanView(p, sender)));
+    return views.flatMap((v) => (v ? [v] : []));
+  }
+
+  private async dmPlanView(plan: Plan, sender: User): Promise<DmPlan | null> {
+    const member = (await this.repo.listMembers(plan.id)).find((m) => m.userId === sender.id);
+    if (!member) return null;
+    const isOrganizer = plan.organizerId === sender.id;
+    const optionCount =
+      isOrganizer && plan.status === "organizer_pick" ? (await this.repo.listSlots(plan.id, plan.round)).length : 0;
+    return { plan, isOrganizer, answered: member.statedAvailability !== null, optionCount };
+  }
+
+  private async planRepliedTo(handle: string, sender: User): Promise<DmPlan | null> {
+    const planId = await this.repo.getPlanIdForMessage(handle);
+    const plan = planId ? await this.repo.getPlan(planId) : null;
+    return plan ? this.dmPlanView(plan, sender) : null;
+  }
+
+  private async followRoute(route: DmRoute, sender: User, text: string): Promise<void> {
+    switch (route.kind) {
+      case "answer":
+        await this.lock.run(route.plan.groupId, () => this.saveAvailability(route.plan.id, sender, text, route.others));
+        break;
+      case "pick":
+        await this.lock.run(route.plan.groupId, () => this.pickFromDm(route.plan.id, sender, route.option));
+        break;
+      case "pick_invalid":
+        await this.sayPickInvalid(route.plan, sender, route.optionCount);
+        break;
+      case "closed":
+        await this.sayClosed(route.plan, sender, route.others);
+        break;
+      case "ask":
+        await this.askWhichPlan(route.choices, sender, text);
+        break;
+      case "none":
+        await this.sayDirect(sender.address, { kind: "dm_help" });
+        break;
+    }
+  }
+
+  /** Lists the plans it could be, by number, and remembers what they said so they needn't repeat it. */
+  private async askWhichPlan(choices: DmChoice[], sender: User, text: string): Promise<void> {
+    const labels = await Promise.all(
+      choices.map(async (choice) => {
+        const plan = await this.describePlanFor(choice.plan, sender);
+        if (choice.kind === "answer") {
+          // Only spell out the action when a pick is also on the list, which is when a bare number was sent.
+          return choices.some((c) => c.kind === "pick") ? `Use "${text}" as your answer for ${plan}` : plan;
+        }
+        const slots = await this.repo.listSlots(choice.plan.id, choice.plan.round);
+        const slot = slots.find((s) => s.optionNumber === choice.option);
+        return `Pick ${slot ? this.slotLabel(slot, choice.plan) : `option ${choice.option}`} for ${plan}`;
+      }),
+    );
+    const sent = await this.sayDirect(sender.address, { kind: "availability_which", choices: labels });
+    if (sent) this.pendingChoices.set(sender.id, { text, choices, expiresAt: this.now().getTime() + PENDING_CHOICE_MS });
+  }
+
+  private async describePlanFor(plan: Plan, sender: User): Promise<string> {
+    const organizer = plan.organizerId === sender.id ? null : await this.repo.getUser(plan.organizerId);
+    const organizedBy = plan.organizerId === sender.id ? "you" : organizer ? displayName(organizer) : "someone";
+    const dates = windowLabel(plan.request.windowStart, plan.request.windowEnd, plan.timezone);
+    return `${planLabel(plan)} (organized by ${organizedBy}, ${dates})`;
+  }
+
+  private async sayPickInvalid(plan: Plan, sender: User, optionCount: number): Promise<void> {
+    await this.sayAboutPlan(plan, sender.address, { kind: "pick_invalid", activity: plan.request.activity, optionCount });
+  }
+
+  private async sayClosed(plan: Plan, sender: User, others: Plan[]): Promise<void> {
+    await this.sayAboutPlan(plan, sender.address, {
+      kind: "availability_closed",
+      activity: planLabel(plan),
+      finished: plan.status !== "organizer_pick",
+      otherActivities: others.map(planLabel),
+    });
+  }
+
+  private async saveAvailability(planId: string, sender: User, text: string, others: Plan[] = []): Promise<void> {
     const plan = await this.repo.getPlan(planId); // re-read inside the lock
     if (!plan) return;
     const { activity, windowStart, windowEnd } = plan.request;
     if (plan.status !== "collecting") {
-      await this.sayDirect(sender.address, { kind: "availability_closed", activity });
+      await this.sayClosed(plan, sender, []);
       return;
     }
     const window: TimeWindow = { start: windowStart, end: windowEnd };
@@ -310,7 +399,7 @@ export class Coordinator {
     const windows = reading.kind === "windows" ? clipWindows(reading.windows, window) : [];
     // Times entirely outside the plan aren't an answer, so ask again rather than count them as "nothing works".
     if (reading.kind === "unclear" || (reading.kind === "windows" && windows.length === 0)) {
-      await this.sayDirect(sender.address, {
+      await this.sayAboutPlan(plan, sender.address, {
         kind: "availability_unclear",
         activity,
         windowLabel: windowLabel(windowStart, windowEnd, plan.timezone),
@@ -320,13 +409,28 @@ export class Coordinator {
 
     await this.repo.updateMember(plan.id, sender.id, { statedAvailability: windows, timedOut: false });
     const waitingOn = (await this.repo.listMembers(plan.id)).filter(isAwaitedAnswer).length;
-    await this.sayDirect(sender.address, {
+    await this.sayAboutPlan(plan, sender.address, {
       kind: "availability_saved",
-      activity,
+      activity: planLabel(plan),
       windowLabels: windows.map((w) => describeWindow(w, window, plan.timezone)),
       waitingOn,
+      otherActivities: others.map(planLabel),
     });
     await this.closeCollectionIfDone(plan);
+  }
+
+  /** The organizer's pick by DM. Re-reads the plan, since a stale reply must not lock in a plan that's moved on. */
+  private async pickFromDm(planId: string, sender: User, option: number): Promise<void> {
+    const plan = await this.repo.getPlan(planId);
+    if (!plan || plan.organizerId !== sender.id) return;
+    if (plan.status !== "organizer_pick") {
+      await this.sayClosed(plan, sender, []);
+      return;
+    }
+    const slots = await this.repo.listSlots(plan.id, plan.round);
+    const slot = slots.find((s) => s.optionNumber === option);
+    if (slot) await this.lockIn(plan, slot.id);
+    else await this.sayPickInvalid(plan, sender, slots.length);
   }
 
   private async closeCollectionIfDone(plan: Plan): Promise<void> {
@@ -398,7 +502,7 @@ export class Coordinator {
 
     const delivered =
       organizer &&
-      (await this.sayDirect(organizer.address, { kind: "availability_options", organizerName: null, noAnswerNames, options, ...summary }));
+      (await this.sayAboutPlan(plan, organizer.address, { kind: "availability_options", organizerName: null, noAnswerNames, options, ...summary }));
     const organizerName = organizer ? displayName(organizer) : "the organizer";
     if (delivered) {
       await this.say(plan.groupId, { kind: "organizer_picking", organizerName, ...summary });
@@ -882,7 +986,7 @@ export class Coordinator {
       if (reminderDue(m, startedAt, deadline, now) === null) continue;
       const user = await this.repo.getUser(m.userId);
       if (!user) continue;
-      await this.sayDirect(user.address, {
+      await this.sayAboutPlan(plan, user.address, {
         kind: "availability_reminder",
         name: user.name,
         activity: plan.request.activity,
@@ -928,7 +1032,22 @@ export class Coordinator {
       return null;
     }
   }
+
+  /** A DM about one plan, remembered so that replying to it identifies the plan. */
+  private async sayAboutPlan(plan: Plan, address: string, message: BotMessage) {
+    const sent = await this.sayDirect(address, message);
+    if (sent?.messageHandle) {
+      // Losing the link only costs the shortcut, so it mustn't look like a failed DM.
+      await this.repo.linkPlanMessage(sent.messageHandle, plan.id).catch((err) => {
+        console.error("[coordinator] couldn't link a DM to its plan:", err);
+      });
+    }
+    return sent;
+  }
 }
+
+/** The plan's activity and, when known, its channel: "dinner in #friends". */
+const planLabel = (plan: Plan) => (plan.groupName ? `${plan.request.activity} in ${plan.groupName}` : plan.request.activity);
 
 /** Whether the plan is still waiting on this member. Optional members and people who can't be reached aren't waited for. */
 const isAwaitedAnswer = (m: PlanMember) => m.role === "essential" && !m.timedOut && m.statedAvailability === null;

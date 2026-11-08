@@ -23,6 +23,7 @@ export interface DiscordMessageLike {
   author: { id: string; bot?: boolean };
   /** Message id this one replies to, if any. */
   replyToId?: string | null;
+  channelName?: string | null;
   inGuild: boolean;
 }
 
@@ -41,6 +42,7 @@ export function toInbound(
     from: USER_PREFIX + message.author.id,
     botAddress: null,
     groupId: message.inGuild ? CHANNEL_PREFIX + message.channelId : null,
+    groupName: message.channelName ? `#${message.channelName}` : null,
     participants,
     text: normalizeMention(message.content, botUserId),
     replyToHandle: message.replyToId ?? null,
@@ -174,6 +176,7 @@ async function connect(): Promise<Provider> {
               content: message.content,
               author: message.author,
               replyToId: message.reference?.messageId ?? null,
+              channelName: message.inGuild() ? message.channel.name : null,
               inGuild,
             },
             botId,

@@ -111,7 +111,8 @@ export function renderTemplate(m: BotMessage): string {
       return text;
     }
     case "availability_ask": {
-      const who = m.organizerName ? `${m.organizerName} is planning ${m.activity}` : `You're planning ${m.activity}`;
+      const what = m.groupName ? `${m.activity} in ${m.groupName}` : m.activity;
+      const who = m.organizerName ? `${m.organizerName} is planning ${what}` : `You're planning ${what}`;
       return `Hi${m.name ? ` ${m.name}` : ""}! ${who} ${m.windowLabel}. What times work for you? Just reply here, like "Saturday after 6, not Sunday" or "anytime". Please answer by ${m.deadlineLabel}.`;
     }
     case "availability_saved": {
@@ -119,16 +120,23 @@ export function renderTemplate(m: BotMessage): string {
         ? `Got it for ${m.activity}: ${m.windowLabels.join("; ")}.`
         : `Got it, nothing works for you for ${m.activity}.`;
       const waiting = m.waitingOn > 0 ? ` Still waiting on ${m.waitingOn} ${m.waitingOn === 1 ? "person" : "people"}.` : "";
-      return `${saved}${waiting} Reply again to change your answer.`;
+      const other = m.otherActivities[0];
+      const correction = other ? ` If you meant ${list(m.otherActivities)}, say so by name, like "${other}: Saturday after 6".` : "";
+      return `${saved}${waiting} Reply again to change your answer.${correction}`;
     }
     case "availability_unclear":
       return `I couldn't work out times for ${m.activity} from that. It's ${m.windowLabel}, so try something like "Saturday after 6" or "anytime". If nothing works, say "none".`;
     case "availability_reminder":
       return `Hey${m.name ? ` ${m.name}` : ""}, what times work for ${m.activity}? Just reply here by ${m.deadlineLabel}.`;
     case "availability_which":
-      return `You're in a few plans right now: ${list(m.activities)}. Which is this for? Reply again and mention it, like "${m.activities[0]}: Saturday after 6".`;
-    case "availability_closed":
-      return `Thanks, but answers for ${m.activity} have closed and the organizer is choosing a time now.`;
+      return `You're in a few plans right now. Which did you mean? Reply with just the number:\n${m.choices.map((c, i) => `${i + 1}. ${c}`).join("\n")}`;
+    case "availability_closed": {
+      const closed = m.finished
+        ? `${m.activity} is already finished, so I can't change it.`
+        : `Thanks, but answers for ${m.activity} have closed and the organizer is choosing a time now.`;
+      const other = m.otherActivities[0];
+      return other ? `${closed} If this was for ${list(m.otherActivities)}, say so by name, like "${other}: Saturday after 6".` : closed;
+    }
     case "dm_unreachable":
       return `I couldn't DM ${list(m.names)}, so I'll plan without them. Check your DM settings for this server if you'd like to be included.`;
     case "too_many_people":

@@ -63,16 +63,24 @@ export type BotMessage =
       name: string | null;
       organizerName: string | null; // null when this person is the organizer
       activity: string;
+      groupName: string | null;
       windowLabel: string;
       deadlineLabel: string;
     }
-  | { kind: "availability_saved"; activity: string; windowLabels: string[]; waitingOn: number }
+  | {
+      kind: "availability_saved";
+      activity: string;
+      windowLabels: string[];
+      waitingOn: number;
+      /** Set when the bot inferred which plan this was for: what else it could have meant. */
+      otherActivities: string[];
+    }
   | { kind: "availability_unclear"; activity: string; windowLabel: string }
   | { kind: "availability_reminder"; name: string | null; activity: string; deadlineLabel: string }
-  /** They're in several open plans and the reply didn't say which. */
-  | { kind: "availability_which"; activities: string[] }
-  /** A late answer: the organizer is already choosing. */
-  | { kind: "availability_closed"; activity: string }
+  /** They're in several open plans and the reply could be for more than one. Answered by number. */
+  | { kind: "availability_which"; choices: string[] }
+  /** A late answer. `finished`: the plan is over, otherwise the organizer is choosing. `otherActivities` still take answers. */
+  | { kind: "availability_closed"; activity: string; finished: boolean; otherActivities: string[] }
   | { kind: "dm_unreachable"; names: string[] }
   | { kind: "too_many_people"; count: number; max: number }
   | {

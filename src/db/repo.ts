@@ -36,6 +36,8 @@ export interface Repo {
   getPlan(id: string): Promise<Plan | null>;
   getOpenPlanForGroup(groupId: string): Promise<Plan | null>;
   listOpenPlans(): Promise<Plan[]>;
+  /** Every plan this person is a member of, in any status. */
+  listPlansForUser(userId: string): Promise<Plan[]>;
 
   // members
   addMember(planId: string, userId: string, role?: MemberRole): Promise<PlanMember>;
@@ -53,4 +55,8 @@ export interface Repo {
   // proposal message → slot (for reaction votes)
   linkProposalMessage(messageId: string, planId: string, slotId: string): Promise<void>;
   getProposalMessage(messageId: string): Promise<{ planId: string; slotId: string } | null>;
+
+  // the bot's DM → plan (so a reply to it identifies the plan)
+  linkPlanMessage(messageId: string, planId: string): Promise<void>;
+  getPlanIdForMessage(messageId: string): Promise<string | null>;
 }
