@@ -1,7 +1,7 @@
-# DH_Next: group-chat planning agent
+# Coral: group-chat planning agent
 
-Add the bot's number to an iMessage group chat, @mention it with a rough request
-("dinner sometime next weekend"), and it finds a time that works for everyone.
+Add Coral's number to an iMessage group chat, @mention it with a rough request
+("dinner sometime next weekend"), and Coral finds a time that works for everyone.
 It reads free/busy from connected calendars, proposes one time when it's
 confident (2–3 when it isn't), collects thumbs-up / thumbs-down / question-mark votes, and posts the locked-in
 time back to the group.
